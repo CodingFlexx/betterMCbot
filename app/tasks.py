@@ -69,15 +69,23 @@ async def message_cleanup_task(bot, logger, cfg):
         await asyncio.sleep(cfg["MESSAGE_CLEANUP_INTERVAL_MINUTES_INT"] * 60)
 
 
-async def start_web_server(bot, logger, cfg, verify_and_handle_github):
+async def start_web_server(bot, logger, cfg, verify_and_handle_github, verify_and_handle_mc=None):
     async def handle_health(request: web.Request):
         return web.Response(text="ok")
 
     async def github_webhook_handler(request: web.Request):
         return await verify_and_handle_github(request)
 
+    async def mc_webhook_handler(request: web.Request):
+        if verify_and_handle_mc is None:
+            return web.Response(status=404)
+        return await verify_and_handle_mc(request)
+
     app = web.Application()
-    app.add_routes([web.get("/healthz", handle_health), web.post("/github", github_webhook_handler)])
+    routes = [web.get("/healthz", handle_health), web.post("/github", github_webhook_handler)]
+    if verify_and_handle_mc is not None:
+        routes.append(web.post("/mc", mc_webhook_handler))
+    app.add_routes(routes)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(cfg.get("PORT") or 8080)

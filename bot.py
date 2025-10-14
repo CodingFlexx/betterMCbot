@@ -253,7 +253,43 @@ async def on_ready():
                 return web.Response(text="ok")
             from aiohttp import web
             return web.Response(text="ignored")
-        bot.loop.create_task(task_start_web(bot, logger, {"PORT": os.getenv("PORT")}, verify_and_handle_github))
+        async def verify_and_handle_mc(request):
+            from aiohttp import web
+            mc_secret = os.getenv("MC_WEBHOOK_SECRET")
+            if not mc_secret:
+                return web.Response(status=404)
+            sig = request.headers.get("X-MC-Signature", "")
+            body = await request.read()
+            expected = "sha256=" + __import__("hashlib").sha256((mc_secret).encode("utf-8") + body).hexdigest()
+            if sig != expected:
+                return web.Response(status=401, text="invalid signature")
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except Exception:
+                return web.Response(status=400, text="invalid json")
+            event = payload.get("event")
+            content = payload.get("content") or ""
+            channel_id = CHAT_CHANNEL_ID_INT
+            if not channel_id:
+                return web.Response(status=202, text="no mirror channel")
+            channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+            if event == "chat":
+                author = payload.get("author") or "MC"
+                await channel.send(f"[MC] {author}: {content}")
+            elif event == "join":
+                await channel.send(f"[MC] {content} ist beigetreten")
+            elif event == "leave":
+                await channel.send(f"[MC] {content} hat den Server verlassen")
+            elif event == "whitelistadd":
+                # optional, kann Client auslösen
+                try:
+                    with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
+                        wl = client.whitelist
+                        wl.add(str(content))
+                except Exception:
+                    pass
+            return web.Response(text="ok")
+        bot.loop.create_task(task_start_web(bot, logger, {"PORT": os.getenv("PORT")}, verify_and_handle_github, verify_and_handle_mc))
     # Auto-Cleanup-Job starten
     if CHAT_CHANNEL_ID_INT and (MESSAGE_CLEANUP_RETENTION_HOURS_INT or 0) > 0:
         bot.loop.create_task(message_cleanup_task())
