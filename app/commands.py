@@ -76,7 +76,7 @@ def register_text_commands(bot: commands.Bot, deps):
                 if trig_id and trig_id != ctx.message.id:
                     try:
                         old_trig = await ctx.channel.fetch_message(trig_id)
-                        if old_trig and old_trig.author == ctx.author:
+                        if old_trig:
                             await old_trig.delete()
                     except Exception:
                         pass
