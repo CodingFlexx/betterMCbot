@@ -74,6 +74,7 @@ COUNTDOWN_CHANNEL_ID_INT = None
 COUNTDOWN_TARGET_ISO = None  # ISO-String ohne/mit TZ; naive wird in COUNTDOWN_TZ interpretiert
 COUNTDOWN_TZ = DEFAULT_TIMEZONE
 COUNTDOWN_LAST_EVENT_ID = None
+COUNTDOWN_LAST_MESSAGE_ID = None
 
 HAS_RCON = bool(SERVER_IP and RCON_PASSWORD and RCON_PORT_INT)
 HAS_QUERY = bool(SERVER_IP and QUERY_PORT_INT)
@@ -103,7 +104,7 @@ def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
     global HAS_BRIDGE, HAS_GITHUB
     global COMMAND_PREFIX
-    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID
+    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -148,6 +149,12 @@ def _apply_runtime_config(data):
     last_id = data.get("countdown_last_event_id")
     if isinstance(last_id, str) and last_id:
         COUNTDOWN_LAST_EVENT_ID = last_id
+    last_msg_id = data.get("countdown_last_message_id")
+    if last_msg_id is not None:
+        try:
+            COUNTDOWN_LAST_MESSAGE_ID = int(last_msg_id)
+        except Exception:
+            COUNTDOWN_LAST_MESSAGE_ID = None
 
     HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
     HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
@@ -238,7 +245,19 @@ async def on_ready():
         bot.loop.create_task(message_cleanup_task())
     # Countdown-Job starten
     if COUNTDOWN_CHANNEL_ID_INT and COUNTDOWN_TARGET_ISO:
-        bot.loop.create_task(countdown_task())
+        bot.loop.create_task(task_countdown(
+            bot,
+            logger,
+            {
+                "COUNTDOWN_CHANNEL_ID_INT": COUNTDOWN_CHANNEL_ID_INT,
+                "COUNTDOWN_TARGET_ISO": COUNTDOWN_TARGET_ISO,
+                "COUNTDOWN_TZ": COUNTDOWN_TZ,
+            },
+            task_parse_iso,
+            task_fmt_td,
+            lambda: COUNTDOWN_LAST_MESSAGE_ID,
+            lambda mid: _save_last_countdown_message_id(mid)
+        ))
     # Commands registrieren
     deps = {
         "mcipc_Client": Client,
@@ -256,6 +275,8 @@ async def on_ready():
         "parse_iso_to_dt": task_parse_iso,
         "COUNTDOWN_TZ": COUNTDOWN_TZ,
         "fmt_td": task_fmt_td,
+        "get_last_msg_id": lambda: COUNTDOWN_LAST_MESSAGE_ID,
+        "set_last_msg_id": lambda mid: _save_last_countdown_message_id(mid),
         "load_config": load_config,
         "save_config": save_config,
         "apply_config": _apply_runtime_config,
@@ -270,6 +291,7 @@ async def on_ready():
             "countdown_channel_id": COUNTDOWN_CHANNEL_ID_INT,
             "countdown_target_iso": COUNTDOWN_TARGET_ISO,
             "countdown_timezone": COUNTDOWN_TZ,
+            "countdown_last_message_id": COUNTDOWN_LAST_MESSAGE_ID,
             "features": {
                 "bridge": HAS_BRIDGE,
                 "rcon": HAS_RCON,
@@ -301,7 +323,7 @@ async def on_message(message):
         return
     try:
         with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
-            client.say("[Discord] " + message.author.name + ": " + message.content)
+        client.say("[Discord] " + message.author.name + ": " + message.content)
     except Exception as exc:
         logger.warning("RCON Send fehlgeschlagen: %s", exc)
 
@@ -555,83 +577,11 @@ def _format_time_delta(delta: timedelta) -> str:
         parts.append(f"{minutes} Min")
     return ", ".join(parts) or "0 Min"
 
-async def countdown_task():
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        try:
-            if not COUNTDOWN_CHANNEL_ID_INT or not COUNTDOWN_TARGET_ISO:
-                await asyncio.sleep(300)
-                continue
-            channel = bot.get_channel(COUNTDOWN_CHANNEL_ID_INT)
-            if channel is None:
-                try:
-                    channel = await bot.fetch_channel(COUNTDOWN_CHANNEL_ID_INT)
-                except Exception:
-                    await asyncio.sleep(300)
-                    continue
-            tz = ZoneInfo(COUNTDOWN_TZ)
-            now = datetime.now(tz)
-            target = _parse_iso_to_aware_dt(COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ)
-            remaining = target - now
+def _save_last_countdown_message_id(mid: int) -> None:
+    global COUNTDOWN_LAST_MESSAGE_ID
+    COUNTDOWN_LAST_MESSAGE_ID = mid
+    data = load_config()
+    data["countdown_last_message_id"] = mid
+    save_config(data)
 
-            # Ermittlung der Sendelogik
-            if remaining.total_seconds() <= 0:
-                await asyncio.sleep(600)
-                continue
-
-            send_now = False
-            message = None
-
-            # Weniger als 7 Tage → täglich zur Zieluhrzeit
-            if remaining <= timedelta(days=7):
-                if now.hour == target.hour and now.minute == target.minute:
-                    if remaining > timedelta(hours=24):
-                        days_left = remaining.days
-                        message = f"Es sind noch {days_left} Tage bis zum Serverstart verbleibend."
-                        send_now = True
-                    else:
-                        # Am Starttag besondere Intervalle
-                        # 00:00, 12:00 und dann 3h/2h/1h/10min vor Start
-                        midnight = target.replace(hour=0, minute=0, second=0, microsecond=0)
-                        if now >= midnight:
-                            hours_left = int(remaining.total_seconds() // 3600)
-                            if now.hour == 0 and now.minute == 0:
-                                message = f"Heute ist Start! Noch {hours_left} Stunden."
-                                send_now = True
-                            elif now.hour == 12 and now.minute == 0:
-                                message = f"Heute ist Start! Noch {hours_left} Stunden."
-                                send_now = True
-                            else:
-                                # 3h, 2h, 1h, 10min vorher
-                                checkpoints = [
-                                    timedelta(hours=3),
-                                    timedelta(hours=2),
-                                    timedelta(hours=1),
-                                    timedelta(minutes=10),
-                                ]
-                                for cp in checkpoints:
-                                    if abs((remaining - cp).total_seconds()) < 60:
-                                        if cp >= timedelta(hours=1):
-                                            message = f"Nur noch {int(cp.total_seconds()//3600)} Stunden bis zum Start!"
-                                        else:
-                                            message = "Nur noch 10 Minuten bis zum Start!"
-                                        send_now = True
-                                        break
-            else:
-                # Wöchentlich am Wochentag/Uhrzeit des Targets
-                if now.weekday() == target.weekday() and now.hour == target.hour and now.minute == target.minute:
-                    weeks_left = int(remaining.days // 7)
-                    if weeks_left < 1:
-                        weeks_left = 1
-                    message = f"Es sind noch {weeks_left} Wochen bis zum Serverstart verbleibend."
-                    send_now = True
-
-            if send_now and message:
-                try:
-                    await channel.send(message)
-                except Exception:
-                    pass
-        except Exception as exc:
-            logger.warning("Countdown Fehler: %s", exc)
-        await asyncio.sleep(60)
 bot.run(TOKEN)

@@ -113,7 +113,7 @@ def format_time_delta(delta: timedelta) -> str:
     return ", ".join(parts) or "0 Min"
 
 
-async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td):
+async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg_id, set_last_msg_id):
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
@@ -175,7 +175,17 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td):
 
             if send_now and message:
                 try:
-                    await channel.send(message)
+                    # Vorherige Bot-Countdown-Nachricht löschen
+                    last_id = get_last_msg_id()
+                    if last_id:
+                        try:
+                            old = await channel.fetch_message(last_id)
+                            if old and old.author == bot.user:
+                                await old.delete()
+                        except Exception:
+                            pass
+                    sent = await channel.send(message)
+                    set_last_msg_id(sent.id)
                 except Exception:
                     pass
         except Exception as exc:
