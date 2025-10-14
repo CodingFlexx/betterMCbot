@@ -504,60 +504,6 @@ async def disable_countdown(interaction: discord.Interaction):
     await interaction.response.send_message("Countdown deaktiviert.", ephemeral=True)
 
 
-# ------------------------------
-# Webhook Server (GitHub)
-# ------------------------------
-
-async def handle_health(request: web.Request) -> web.Response:
-    return web.Response(text="ok")
-
-async def github_webhook_handler(request: web.Request) -> web.Response:
-    if not WEBHOOK_ACTIVE:
-        return web.Response(status=404)
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    event = request.headers.get("X-GitHub-Event", "")
-    body = await request.read()
-    expected = "sha256=" + hmac.new(GITHUB_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return web.Response(status=401, text="invalid signature")
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except Exception:
-        return web.Response(status=400, text="invalid json")
-    if event == "push":
-        repo_full_name = (payload.get("repository") or {}).get("full_name")
-        if GITHUB_REPO and repo_full_name and GITHUB_REPO != repo_full_name:
-            return web.Response(status=202, text="ignored repo")
-        channel_id = GITHUB_UPDATES_CHANNEL_ID_INT
-        if not channel_id:
-            return web.Response(status=202, text="no channel configured")
-        channel = bot.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await bot.fetch_channel(channel_id)
-            except Exception:
-                return web.Response(status=202, text="channel not found")
-        commits = payload.get("commits") or []
-        if not commits and payload.get("head_commit"):
-            commits = [payload.get("head_commit")]
-        for c in commits:
-            author = ((c.get("author") or {}).get("name")) or "?"
-            message = c.get("message") or ""
-            url = c.get("url") or ""
-            await channel.send(f"[GitHub] {author}: {message}\n{url}")
-        return web.Response(text="ok")
-    return web.Response(text="ignored")
-
-async def start_web_server() -> None:
-    app = web.Application()
-    app.add_routes([web.get("/healthz", handle_health), web.post("/github", github_webhook_handler)])
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT") or 8080)
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logger.info("Webhook Server listening on :%d", port)
-
 async def message_cleanup_task():
     await bot.wait_until_ready()
     while not bot.is_closed():
