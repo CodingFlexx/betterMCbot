@@ -1,3 +1,8 @@
+import os
+
+# Voice-Funktionen deaktivieren, um audioop-Import zu vermeiden (z. B. unter Python 3.13)
+os.environ.setdefault("DISCORD_DISABLE_VOICE", "1")
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -7,7 +12,6 @@ from mcipc.query import Client as QueryClient
 import asyncio
 import aiohttp
 import logging
-import os
 import json
 from typing import Optional
 
