@@ -259,7 +259,7 @@ async def on_message(message):
         return
     try:
         with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
-        client.say("[Discord] " + message.author.name + ": " + message.content)
+            client.say("[Discord] " + message.author.name + ": " + message.content)
     except Exception as exc:
         logger.warning("RCON Send fehlgeschlagen: %s", exc)
 
