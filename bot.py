@@ -335,55 +335,6 @@ async def on_message(message):
         logger.warning("RCON Send fehlgeschlagen: %s", exc)
 
 
-@bot.command(name='whitelistadd')
-async def whitelistadd(ctx, *, arg):
-    if CHAT_CHANNEL_ID_INT and ctx.channel.id != CHAT_CHANNEL_ID_INT:
-        return
-    name = arg
-    try:
-        if not HAS_RCON:
-            await ctx.send("Minecraft-RCON ist nicht konfiguriert.")
-            return
-        with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
-            whitelist = client.whitelist
-            whitelist.add(name)
-            await ctx.send("Spieler " + name + " wurde zur Whitelist hinzugefügt")
-    except Exception as e:
-        await ctx.send("Server nicht erreichbar")
-
-
-@bot.command(name='ping')
-async def ping(ctx):
-    if CHAT_CHANNEL_ID_INT and ctx.channel.id != CHAT_CHANNEL_ID_INT:
-        return
-    try:
-        if not HAS_QUERY:
-            await ctx.send("Minecraft-Query ist nicht konfiguriert.")
-            return
-        with QueryClient(SERVER_IP, QUERY_PORT_INT) as client:
-            status = client.stats(full=True)
-            ans = "Server ist online mit " + str(status['num_players']) + "/" + str(
-                status['max_players']) + " Spielern:"
-            for player in status['players']:
-                ans += "\n\t" + player
-            await ctx.send(ans)
-    except Exception as e:
-        await ctx.send("Server ist offline")
-
-
-@bot.command(name='wielange')
-async def wielange(ctx):
-    if not COUNTDOWN_TARGET_ISO:
-        await ctx.send("Kein Countdown-Ziel gesetzt.")
-        return
-    tz = ZoneInfo(COUNTDOWN_TZ)
-    now = datetime.now(tz)
-    target = _parse_iso_to_aware_dt(COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ)
-    remaining = target - now
-    if remaining.total_seconds() <= 0:
-        await ctx.send("Der Zeitpunkt ist bereits erreicht.")
-        return
-    await ctx.send("Verbleibende Zeit: " + _format_time_delta(remaining))
 
 
 #        if status['online'] == 0:
