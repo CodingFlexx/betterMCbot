@@ -11,15 +11,21 @@ from mcipc.rcon.je import Client
 from mcipc.query import Client as QueryClient
 import asyncio
 import aiohttp
-from aiohttp import web
 import logging
 import json
 from typing import Optional
-import hmac
-import hashlib
-from supabase import create_client
+from app.settings import load_config, save_config
+from app.tasks import (
+    github_updates_task as task_github_updates,
+    message_cleanup_task as task_cleanup,
+    start_web_server as task_start_web,
+    countdown_task as task_countdown,
+    parse_iso_to_aware_dt as task_parse_iso,
+    format_time_delta as task_fmt_td,
+)
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
+from app.commands import register_text_commands, register_slash_commands
 
 load_dotenv()
 
@@ -75,58 +81,7 @@ HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
 HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
 
 _last_seen_commit_sha = None
-_supabase = None
-
-def _init_supabase():
-    global _supabase
-    if _supabase is not None:
-        return
-    if not SUPABASE_URL:
-        return
-    key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
-    if not key:
-        return
-    try:
-        _supabase = create_client(SUPABASE_URL, key)
-        logger.info("Supabase-Client initialisiert")
-    except Exception as exc:
-        logger.warning("Supabase-Init fehlgeschlagen: %s", exc)
-
-def _load_config_from_supabase():
-    if _supabase is None:
-        return None
-    try:
-        res = _supabase.table(SUPABASE_TABLE).select("config").eq("id", 1).limit(1).execute()
-        rows = getattr(res, "data", []) or []
-        if not rows:
-            return {}
-        cfg = rows[0].get("config")
-        return cfg if isinstance(cfg, dict) else {}
-    except Exception as exc:
-        logger.warning("Supabase Load fehlgeschlagen: %s", exc)
-        return None
-
-def _save_config_to_supabase(data):
-    if _supabase is None:
-        return False
-    try:
-        _supabase.table(SUPABASE_TABLE).upsert({"id": 1, "config": data}).execute()
-        return True
-    except Exception as exc:
-        logger.warning("Supabase Save fehlgeschlagen: %s", exc)
-        return False
-
-def load_config():
-    _init_supabase()
-    data = _load_config_from_supabase()
-    if data is None:
-        data = _load_config_from_file()
-    return data or {}
-
-def save_config(data):
-    saved = _save_config_to_supabase(data)
-    if not saved:
-        _save_config_to_file(data)
+ 
 
 # Dynamisches Prefix (per Slash-Command änderbar)
 COMMAND_PREFIX = "mc!"
@@ -142,23 +97,7 @@ def get_command_prefix(_bot, message):
         pass
     return prefixes
 
-def _load_config_from_file():
-    try:
-        if not os.path.exists(CONFIG_PATH):
-            return {}
-        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-            return data if isinstance(data, dict) else {}
-    except Exception as exc:
-        logger.warning("Konfigurationsdatei konnte nicht geladen werden: %s", exc)
-        return {}
-
-def _save_config_to_file(data):
-    try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-    except Exception as exc:
-        logger.warning("Konfigurationsdatei konnte nicht gespeichert werden: %s", exc)
+ 
 
 def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
@@ -224,46 +163,7 @@ async def fetch_latest_commits(session, repo_full_name):
             raise RuntimeError(f"GitHub API {resp.status}: {text}")
         return await resp.json()
 
-async def github_updates_task():
-    global _last_seen_commit_sha
-    await bot.wait_until_ready()
-    async with aiohttp.ClientSession() as session:
-        while not bot.is_closed():
-            try:
-                if not HAS_GITHUB or WEBHOOK_ACTIVE:
-                    await asyncio.sleep(GITHUB_POLL_INTERVAL)
-                    continue
-                channel = bot.get_channel(GITHUB_UPDATES_CHANNEL_ID_INT)
-                if channel is None:
-                    logger.warning("GitHub-Updates-Channel nicht gefunden: %s", GITHUB_UPDATES_CHANNEL_ID_INT)
-                    await asyncio.sleep(GITHUB_POLL_INTERVAL)
-                    continue
-                commits = await fetch_latest_commits(session, GITHUB_REPO)
-                if not isinstance(commits, list) or not commits:
-                    await asyncio.sleep(GITHUB_POLL_INTERVAL)
-                    continue
-                newest = commits[0]
-                sha = newest.get("sha")
-                if _last_seen_commit_sha is None:
-                    _last_seen_commit_sha = sha
-                elif sha != _last_seen_commit_sha:
-                    # Finde neue Commits bis zum letzten gesehenen
-                    new_items = []
-                    for item in commits:
-                        if item.get("sha") == _last_seen_commit_sha:
-                            break
-                        new_items.append(item)
-                    # In chronologischer Reihenfolge posten (alt -> neu)
-                    for item in reversed(new_items):
-                        commit = item.get("commit", {})
-                        author = commit.get("author", {}).get("name", "?")
-                        message = commit.get("message", "")
-                        url = item.get("html_url", "")
-                        await channel.send(f"[GitHub] {author}: {message}\n{url}")
-                    _last_seen_commit_sha = sha
-            except Exception as exc:
-                logger.warning("GitHub Updates Fehler: %s", exc)
-            await asyncio.sleep(GITHUB_POLL_INTERVAL)
+ 
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -282,15 +182,105 @@ async def on_ready():
         "on" if HAS_GITHUB else "off",
     )
     if HAS_GITHUB:
-        bot.loop.create_task(github_updates_task())
+        bot.loop.create_task(task_github_updates(bot, logger, fetch_latest_commits, {
+            "HAS_GITHUB": HAS_GITHUB,
+            "WEBHOOK_ACTIVE": WEBHOOK_ACTIVE,
+            "GITHUB_POLL_INTERVAL": GITHUB_POLL_INTERVAL,
+            "GITHUB_UPDATES_CHANNEL_ID_INT": GITHUB_UPDATES_CHANNEL_ID_INT,
+            "GITHUB_REPO": GITHUB_REPO,
+        }))
     if WEBHOOK_ACTIVE:
-        bot.loop.create_task(start_web_server())
+        async def verify_and_handle_github(request):
+            import hmac, hashlib
+            signature = request.headers.get("X-Hub-Signature-256", "")
+            event = request.headers.get("X-GitHub-Event", "")
+            body = await request.read()
+            expected = "sha256=" + hmac.new(GITHUB_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                from aiohttp import web
+                return web.Response(status=401, text="invalid signature")
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except Exception:
+                from aiohttp import web
+                return web.Response(status=400, text="invalid json")
+            if event == "push":
+                repo_full_name = (payload.get("repository") or {}).get("full_name")
+                if GITHUB_REPO and repo_full_name and GITHUB_REPO != repo_full_name:
+                    from aiohttp import web
+                    return web.Response(status=202, text="ignored repo")
+                channel_id = GITHUB_UPDATES_CHANNEL_ID_INT
+                if not channel_id:
+                    from aiohttp import web
+                    return web.Response(status=202, text="no channel configured")
+                channel = bot.get_channel(channel_id)
+                if channel is None:
+                    try:
+                        channel = await bot.fetch_channel(channel_id)
+                    except Exception:
+                        from aiohttp import web
+                        return web.Response(status=202, text="channel not found")
+                commits = payload.get("commits") or []
+                if not commits and payload.get("head_commit"):
+                    commits = [payload.get("head_commit")]
+                for c in commits:
+                    author = ((c.get("author") or {}).get("name")) or "?"
+                    message = c.get("message") or ""
+                    url = c.get("url") or ""
+                    await channel.send(f"[GitHub] {author}: {message}\n{url}")
+                from aiohttp import web
+                return web.Response(text="ok")
+            from aiohttp import web
+            return web.Response(text="ignored")
+        bot.loop.create_task(task_start_web(bot, logger, {"PORT": os.getenv("PORT")}, verify_and_handle_github))
     # Auto-Cleanup-Job starten
     if CHAT_CHANNEL_ID_INT and (MESSAGE_CLEANUP_RETENTION_HOURS_INT or 0) > 0:
         bot.loop.create_task(message_cleanup_task())
     # Countdown-Job starten
     if COUNTDOWN_CHANNEL_ID_INT and COUNTDOWN_TARGET_ISO:
         bot.loop.create_task(countdown_task())
+    # Commands registrieren
+    deps = {
+        "mcipc_Client": Client,
+        "QueryClient": QueryClient,
+        "CHAT_CHANNEL_ID_INT": CHAT_CHANNEL_ID_INT,
+        "HAS_RCON": HAS_RCON,
+        "SERVER_IP": SERVER_IP,
+        "RCON_PORT_INT": RCON_PORT_INT,
+        "RCON_PASSWORD": RCON_PASSWORD,
+        "HAS_QUERY": HAS_QUERY,
+        "QUERY_PORT_INT": QUERY_PORT_INT,
+        "COUNTDOWN_TARGET_ISO": COUNTDOWN_TARGET_ISO,
+        "ZoneInfo": ZoneInfo,
+        "datetime": datetime,
+        "parse_iso_to_dt": task_parse_iso,
+        "COUNTDOWN_TZ": COUNTDOWN_TZ,
+        "fmt_td": task_fmt_td,
+        "load_config": load_config,
+        "save_config": save_config,
+        "apply_config": _apply_runtime_config,
+        "collect_config_display": lambda: json.dumps({
+            "command_prefix": COMMAND_PREFIX,
+            "bridge_channel_id": CHAT_CHANNEL_ID_INT,
+            "github_repo": GITHUB_REPO,
+            "github_updates_channel_id": GITHUB_UPDATES_CHANNEL_ID_INT,
+            "github_poll_interval_seconds": GITHUB_POLL_INTERVAL,
+            "message_cleanup_retention_hours": MESSAGE_CLEANUP_RETENTION_HOURS_INT,
+            "message_cleanup_interval_minutes": MESSAGE_CLEANUP_INTERVAL_MINUTES_INT,
+            "countdown_channel_id": COUNTDOWN_CHANNEL_ID_INT,
+            "countdown_target_iso": COUNTDOWN_TARGET_ISO,
+            "countdown_timezone": COUNTDOWN_TZ,
+            "features": {
+                "bridge": HAS_BRIDGE,
+                "rcon": HAS_RCON,
+                "query": HAS_QUERY,
+                "github": HAS_GITHUB,
+            },
+        }, ensure_ascii=False, indent=2),
+        "reset_last_commit": lambda: None,
+    }
+    register_text_commands(bot, deps)
+    register_slash_commands(bot, deps)
     try:
         await bot.tree.sync()
         logger.info("Slash-Commands synchronisiert")

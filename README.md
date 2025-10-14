@@ -117,6 +117,28 @@ Für dauerhafte Speicherung über Deploys hinweg kannst du Supabase nutzen.
   - Weniger als 7 Tage: Tägliche Nachricht zur Zieluhrzeit.
   - Am Starttag: 00:00 und 12:00 Uhr verbleibende Stunden; zusätzlich 3h/2h/1h/10min vorher.
 - Optionale TZ per ENV `TIMEZONE` (Standard `Europe/Berlin`).
+
+## Projektstruktur (aufgeräumt)
+Die wichtigsten Module und deren Aufgaben:
+
+- `bot.py`: Bootstrap. Startet den Bot, lädt Konfig, verdrahtet Events/Tasks/Commands.
+- `app/settings.py`: Konfiguration & Persistenz
+  - Lädt ENV-Variablen
+  - Speichert/Lädt Konfig via Supabase (Fallback: `config.json`)
+  - `load_config()` / `save_config()` als zentrale API
+- `app/tasks.py`: Hintergrundprozesse
+  - GitHub-Updates (Polling/Webhook-Server)
+  - Auto-Cleanup des Mirror-Channels
+  - Countdown-Scheduler
+- `app/commands.py`: Befehle
+  - Text-Commands (`-whitelistadd`, `mc!ping`, `mc!wielange`, …)
+  - Slash-Commands (`/set_server_channel`, `/set_githubupdate_channel`, `/change_prefix`, `/set_cleanup`, `/set_countdown`, …)
+
+Weitere Dateien:
+- `env.template`: Vorlage der ENV-Variablen
+- `requirements.txt`: Python-Abhängigkeiten
+- `Procfile`: Start als Web-Prozess (Webhook-Unterstützung)
+- `railway.toml`: Railway-Service-Konfiguration
 ENV-Variablen (mindestens):
 ```
 SUPABASE_URL
