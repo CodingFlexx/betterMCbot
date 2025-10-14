@@ -18,6 +18,8 @@ from typing import Optional
 import hmac
 import hashlib
 from supabase import create_client
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 
@@ -36,6 +38,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_TABLE = os.getenv("SUPABASE_TABLE", "bot_config")
+MESSAGE_CLEANUP_RETENTION_HOURS = os.getenv("MESSAGE_CLEANUP_RETENTION_HOURS", "48")
+MESSAGE_CLEANUP_INTERVAL_MINUTES = os.getenv("MESSAGE_CLEANUP_INTERVAL_MINUTES", "60")
+DEFAULT_TIMEZONE = os.getenv("TIMEZONE", "Europe/Berlin")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("betterMCbot")
@@ -55,6 +60,14 @@ CHAT_CHANNEL_ID_INT = _parse_int(CHAT_CHANNEL_ID)
 GITHUB_UPDATES_CHANNEL_ID_INT = _parse_int(GITHUB_UPDATES_CHANNEL_ID)
 GITHUB_POLL_INTERVAL = _parse_int(GITHUB_POLL_INTERVAL_SECONDS) or 120
 WEBHOOK_ACTIVE = bool(GITHUB_WEBHOOK_SECRET)
+MESSAGE_CLEANUP_RETENTION_HOURS_INT = _parse_int(MESSAGE_CLEANUP_RETENTION_HOURS) or 48
+MESSAGE_CLEANUP_INTERVAL_MINUTES_INT = _parse_int(MESSAGE_CLEANUP_INTERVAL_MINUTES) or 60
+
+# Countdown-Konfiguration
+COUNTDOWN_CHANNEL_ID_INT = None
+COUNTDOWN_TARGET_ISO = None  # ISO-String ohne/mit TZ; naive wird in COUNTDOWN_TZ interpretiert
+COUNTDOWN_TZ = DEFAULT_TIMEZONE
+COUNTDOWN_LAST_EVENT_ID = None
 
 HAS_RCON = bool(SERVER_IP and RCON_PASSWORD and RCON_PORT_INT)
 HAS_QUERY = bool(SERVER_IP and QUERY_PORT_INT)
@@ -116,10 +129,18 @@ def save_config(data):
         _save_config_to_file(data)
 
 # Dynamisches Prefix (per Slash-Command änderbar)
-COMMAND_PREFIX = "-"
+COMMAND_PREFIX = "mc!"
 
-def get_command_prefix(_bot, _message):
-    return COMMAND_PREFIX
+def get_command_prefix(_bot, message):
+    # Global dynamisches Prefix (z. B. "mc!")
+    prefixes = [COMMAND_PREFIX]
+    # Im Mirror-Channel zusätzlich das klassische "-" erlauben
+    try:
+        if CHAT_CHANNEL_ID_INT and message and message.channel and message.channel.id == CHAT_CHANNEL_ID_INT:
+            prefixes.append("-")
+    except Exception:
+        pass
+    return prefixes
 
 def _load_config_from_file():
     try:
@@ -143,6 +164,7 @@ def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
     global HAS_BRIDGE, HAS_GITHUB
     global COMMAND_PREFIX
+    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -163,6 +185,30 @@ def _apply_runtime_config(data):
     prefix_cfg = data.get("command_prefix")
     if isinstance(prefix_cfg, str) and prefix_cfg:
         COMMAND_PREFIX = prefix_cfg
+
+    retention_cfg = _parse_int(str(data.get("message_cleanup_retention_hours")))
+    if retention_cfg is not None:
+        global MESSAGE_CLEANUP_RETENTION_HOURS_INT
+        MESSAGE_CLEANUP_RETENTION_HOURS_INT = retention_cfg
+
+    interval_cfg = _parse_int(str(data.get("message_cleanup_interval_minutes")))
+    if interval_cfg is not None:
+        global MESSAGE_CLEANUP_INTERVAL_MINUTES_INT
+        MESSAGE_CLEANUP_INTERVAL_MINUTES_INT = interval_cfg
+
+    # Countdown
+    cd_channel = _parse_int(data.get("countdown_channel_id"))
+    if cd_channel is not None:
+        COUNTDOWN_CHANNEL_ID_INT = cd_channel
+    cd_target = data.get("countdown_target_iso")
+    if isinstance(cd_target, str) and cd_target:
+        COUNTDOWN_TARGET_ISO = cd_target.strip()
+    cd_tz = data.get("countdown_timezone")
+    if isinstance(cd_tz, str) and cd_tz:
+        COUNTDOWN_TZ = cd_tz.strip()
+    last_id = data.get("countdown_last_event_id")
+    if isinstance(last_id, str) and last_id:
+        COUNTDOWN_LAST_EVENT_ID = last_id
 
     HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
     HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
@@ -239,6 +285,12 @@ async def on_ready():
         bot.loop.create_task(github_updates_task())
     if WEBHOOK_ACTIVE:
         bot.loop.create_task(start_web_server())
+    # Auto-Cleanup-Job starten
+    if CHAT_CHANNEL_ID_INT and (MESSAGE_CLEANUP_RETENTION_HOURS_INT or 0) > 0:
+        bot.loop.create_task(message_cleanup_task())
+    # Countdown-Job starten
+    if COUNTDOWN_CHANNEL_ID_INT and COUNTDOWN_TARGET_ISO:
+        bot.loop.create_task(countdown_task())
     try:
         await bot.tree.sync()
         logger.info("Slash-Commands synchronisiert")
@@ -259,13 +311,15 @@ async def on_message(message):
         return
     try:
         with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
-            client.say("[Discord] " + message.author.name + ": " + message.content)
+        client.say("[Discord] " + message.author.name + ": " + message.content)
     except Exception as exc:
         logger.warning("RCON Send fehlgeschlagen: %s", exc)
 
 
-@bot.command(name='whitelist')
-async def whitelist(ctx, *, arg):
+@bot.command(name='whitelistadd')
+async def whitelistadd(ctx, *, arg):
+    if CHAT_CHANNEL_ID_INT and ctx.channel.id != CHAT_CHANNEL_ID_INT:
+        return
     name = arg
     try:
         if not HAS_RCON:
@@ -281,6 +335,8 @@ async def whitelist(ctx, *, arg):
 
 @bot.command(name='ping')
 async def ping(ctx):
+    if CHAT_CHANNEL_ID_INT and ctx.channel.id != CHAT_CHANNEL_ID_INT:
+        return
     try:
         if not HAS_QUERY:
             await ctx.send("Minecraft-Query ist nicht konfiguriert.")
@@ -294,6 +350,21 @@ async def ping(ctx):
             await ctx.send(ans)
     except Exception as e:
         await ctx.send("Server ist offline")
+
+
+@bot.command(name='wielange')
+async def wielange(ctx):
+    if not COUNTDOWN_TARGET_ISO:
+        await ctx.send("Kein Countdown-Ziel gesetzt.")
+        return
+    tz = ZoneInfo(COUNTDOWN_TZ)
+    now = datetime.now(tz)
+    target = _parse_iso_to_aware_dt(COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ)
+    remaining = target - now
+    if remaining.total_seconds() <= 0:
+        await ctx.send("Der Zeitpunkt ist bereits erreicht.")
+        return
+    await ctx.send("Verbleibende Zeit: " + _format_time_delta(remaining))
 
 
 #        if status['online'] == 0:
@@ -357,6 +428,11 @@ async def show_config(interaction: discord.Interaction):
         "github_repo": GITHUB_REPO,
         "github_updates_channel_id": GITHUB_UPDATES_CHANNEL_ID_INT,
         "github_poll_interval_seconds": GITHUB_POLL_INTERVAL,
+        "message_cleanup_retention_hours": MESSAGE_CLEANUP_RETENTION_HOURS_INT,
+        "message_cleanup_interval_minutes": MESSAGE_CLEANUP_INTERVAL_MINUTES_INT,
+        "countdown_channel_id": COUNTDOWN_CHANNEL_ID_INT,
+        "countdown_target_iso": COUNTDOWN_TARGET_ISO,
+        "countdown_timezone": COUNTDOWN_TZ,
         "features": {
             "bridge": HAS_BRIDGE,
             "rcon": HAS_RCON,
@@ -385,6 +461,57 @@ async def change_prefix(interaction: discord.Interaction, prefix: str):
     save_config(data)
     COMMAND_PREFIX = prefix
     await interaction.response.send_message(f"Prefix geändert auf `{prefix}`.", ephemeral=True)
+
+
+@bot.tree.command(name="set_cleanup", description="Setzt Aufbewahrungsdauer und Laufintervall für Auto-Cleanup")
+@app_commands.describe(retention_hours="Stunden bis zur Löschung (z. B. 48)", interval_minutes="Intervall in Minuten (z. B. 60)")
+@app_commands.default_permissions(manage_guild=True)
+async def set_cleanup(interaction: discord.Interaction, retention_hours: Optional[int] = None, interval_minutes: Optional[int] = None):
+    changed = []
+    data = load_config()
+    if retention_hours is not None and retention_hours >= 0:
+        data["message_cleanup_retention_hours"] = retention_hours
+        changed.append(f"retention={retention_hours}h")
+    if interval_minutes is not None and interval_minutes > 0:
+        data["message_cleanup_interval_minutes"] = interval_minutes
+        changed.append(f"interval={interval_minutes}m")
+    if not changed:
+        await interaction.response.send_message("Keine Änderungen übergeben.", ephemeral=True)
+        return
+    save_config(data)
+    _apply_runtime_config(data)
+    await interaction.response.send_message("Cleanup aktualisiert: " + ", ".join(changed), ephemeral=True)
+
+
+@bot.tree.command(name="set_countdown", description="Setzt Countdown-Ziel (ISO Datum/Zeit) und Ziel-Channel")
+@app_commands.describe(target_iso="z. B. 2025-12-31T17:00", channel="Ziel-Channel", timezone_name="z. B. Europe/Berlin")
+@app_commands.default_permissions(manage_guild=True)
+async def set_countdown(interaction: discord.Interaction, target_iso: str, channel: discord.TextChannel, timezone_name: Optional[str] = None):
+    tzname = timezone_name.strip() if isinstance(timezone_name, str) and timezone_name else COUNTDOWN_TZ
+    try:
+        _ = _parse_iso_to_aware_dt(target_iso, tzname)
+    except Exception:
+        await interaction.response.send_message("Ungültiges ISO-Datum. Beispiel: 2025-12-31T17:00", ephemeral=True)
+        return
+    data = load_config()
+    data["countdown_channel_id"] = channel.id
+    data["countdown_target_iso"] = target_iso
+    data["countdown_timezone"] = tzname
+    save_config(data)
+    _apply_runtime_config(data)
+    await interaction.response.send_message(f"Countdown gesetzt: {target_iso} ({tzname}) → {channel.mention}", ephemeral=True)
+
+
+@bot.tree.command(name="disable_countdown", description="Deaktiviert den Countdown")
+@app_commands.default_permissions(manage_guild=True)
+async def disable_countdown(interaction: discord.Interaction):
+    data = load_config()
+    data.pop("countdown_channel_id", None)
+    data.pop("countdown_target_iso", None)
+    data.pop("countdown_timezone", None)
+    save_config(data)
+    _apply_runtime_config(data)
+    await interaction.response.send_message("Countdown deaktiviert.", ephemeral=True)
 
 
 # ------------------------------
@@ -441,4 +568,134 @@ async def start_web_server() -> None:
     await site.start()
     logger.info("Webhook Server listening on :%d", port)
 
+async def message_cleanup_task():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            if not CHAT_CHANNEL_ID_INT or (MESSAGE_CLEANUP_RETENTION_HOURS_INT or 0) <= 0:
+                await asyncio.sleep(MESSAGE_CLEANUP_INTERVAL_MINUTES_INT * 60)
+                continue
+            channel = bot.get_channel(CHAT_CHANNEL_ID_INT)
+            if channel is None:
+                try:
+                    channel = await bot.fetch_channel(CHAT_CHANNEL_ID_INT)
+                except Exception:
+                    await asyncio.sleep(MESSAGE_CLEANUP_INTERVAL_MINUTES_INT * 60)
+                    continue
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=MESSAGE_CLEANUP_RETENTION_HOURS_INT)
+            async for msg in channel.history(limit=200, oldest_first=False):
+                if msg.created_at and msg.created_at.replace(tzinfo=timezone.utc) < cutoff:
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.warning("Cleanup Fehler: %s", exc)
+        await asyncio.sleep(MESSAGE_CLEANUP_INTERVAL_MINUTES_INT * 60)
+
+def _parse_iso_to_aware_dt(iso_str: str, tz_name: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=ZoneInfo(tz_name))
+        return dt.astimezone(ZoneInfo(tz_name))
+    except Exception:
+        # Fallback: jetzt + 1 Tag
+        return (datetime.now(timezone.utc) + timedelta(days=1)).astimezone(ZoneInfo(tz_name))
+
+def _format_time_delta(delta: timedelta) -> str:
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 0:
+        total_seconds = 0
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} Tage")
+    if hours:
+        parts.append(f"{hours} Std")
+    if minutes and not days:
+        parts.append(f"{minutes} Min")
+    return ", ".join(parts) or "0 Min"
+
+async def countdown_task():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            if not COUNTDOWN_CHANNEL_ID_INT or not COUNTDOWN_TARGET_ISO:
+                await asyncio.sleep(300)
+                continue
+            channel = bot.get_channel(COUNTDOWN_CHANNEL_ID_INT)
+            if channel is None:
+                try:
+                    channel = await bot.fetch_channel(COUNTDOWN_CHANNEL_ID_INT)
+                except Exception:
+                    await asyncio.sleep(300)
+                    continue
+            tz = ZoneInfo(COUNTDOWN_TZ)
+            now = datetime.now(tz)
+            target = _parse_iso_to_aware_dt(COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ)
+            remaining = target - now
+
+            # Ermittlung der Sendelogik
+            if remaining.total_seconds() <= 0:
+                await asyncio.sleep(600)
+                continue
+
+            send_now = False
+            message = None
+
+            # Weniger als 7 Tage → täglich zur Zieluhrzeit
+            if remaining <= timedelta(days=7):
+                if now.hour == target.hour and now.minute == target.minute:
+                    if remaining > timedelta(hours=24):
+                        days_left = remaining.days
+                        message = f"Es sind noch {days_left} Tage bis zum Serverstart verbleibend."
+                        send_now = True
+                    else:
+                        # Am Starttag besondere Intervalle
+                        # 00:00, 12:00 und dann 3h/2h/1h/10min vor Start
+                        midnight = target.replace(hour=0, minute=0, second=0, microsecond=0)
+                        if now >= midnight:
+                            hours_left = int(remaining.total_seconds() // 3600)
+                            if now.hour == 0 and now.minute == 0:
+                                message = f"Heute ist Start! Noch {hours_left} Stunden."
+                                send_now = True
+                            elif now.hour == 12 and now.minute == 0:
+                                message = f"Heute ist Start! Noch {hours_left} Stunden."
+                                send_now = True
+                            else:
+                                # 3h, 2h, 1h, 10min vorher
+                                checkpoints = [
+                                    timedelta(hours=3),
+                                    timedelta(hours=2),
+                                    timedelta(hours=1),
+                                    timedelta(minutes=10),
+                                ]
+                                for cp in checkpoints:
+                                    if abs((remaining - cp).total_seconds()) < 60:
+                                        if cp >= timedelta(hours=1):
+                                            message = f"Nur noch {int(cp.total_seconds()//3600)} Stunden bis zum Start!"
+                                        else:
+                                            message = "Nur noch 10 Minuten bis zum Start!"
+                                        send_now = True
+                                        break
+            else:
+                # Wöchentlich am Wochentag/Uhrzeit des Targets
+                if now.weekday() == target.weekday() and now.hour == target.hour and now.minute == target.minute:
+                    weeks_left = int(remaining.days // 7)
+                    if weeks_left < 1:
+                        weeks_left = 1
+                    message = f"Es sind noch {weeks_left} Wochen bis zum Serverstart verbleibend."
+                    send_now = True
+
+            if send_now and message:
+                try:
+                    await channel.send(message)
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.warning("Countdown Fehler: %s", exc)
+        await asyncio.sleep(60)
 bot.run(TOKEN)

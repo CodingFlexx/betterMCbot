@@ -55,8 +55,9 @@ In der `server.properties`:
 ## Nutzung
 - Nachrichten im angegebenen Discord-Channel werden via RCON in den Minecraft-Chat gespiegelt (Prefix `[Discord]`).
 - Commands im Discord:
-  - `-whitelist <name>`: Fügt Spieler zur Whitelist hinzu
-  - `-ping`: Zeigt Online-Status und Spielerliste via Query
+  - `-whitelistadd <name>`: Fügt Spieler zur Whitelist hinzu (nur im Mirror-Channel)
+  - `mc!ping`: Zeigt Online-Status und Spielerliste via Query
+  - `mc!wielange`: Zeigt verbleibende Zeit bis zum Countdown-Ziel
 
 ### Betrieb ohne Minecraft-Server (degradierter Modus)
 - Der Bot startet auch, wenn keine RCON/Query-Parameter gesetzt sind.
@@ -93,7 +94,10 @@ Die wichtigsten Einstellungen lassen sich jetzt direkt in Discord setzen (nur Nu
 
 - `/set_server_channel channel:<#channel>`: Setzt den Discord-Channel für die Minecraft-Brücke.
 - `/set_githubupdate_channel repo:owner/repo channel:<#channel> [poll_interval_seconds:120]`: Aktiviert GitHub-Updates für ein Repo in einem Channel.
-- `/change_prefix prefix:<text>`: Ändert das Prefix für klassische Text-Commands (z. B. `-whitelist`).
+- `/change_prefix prefix:<text>`: Ändert das Prefix für klassische Text-Commands (Standard `mc!`).
+- `/set_cleanup [retention_hours:<int>] [interval_minutes:<int>]`: Setzt Auto-Cleanup (Standard 48h/60m).
+- `/set_countdown target_iso:<YYYY-MM-DDTHH:MM> channel:<#channel> [timezone_name:Europe/Berlin]`: Aktiviert den Countdown.
+- `/disable_countdown`: Deaktiviert den Countdown.
 - `/disable_github`: Deaktiviert die GitHub-Updates.
 - `/show_config`: Zeigt die aktuelle Konfiguration.
 
@@ -102,6 +106,17 @@ Persistenz: Die Einstellungen werden in `config.json` im Projektverzeichnis gesp
 ## Optionale Persistenz mit Supabase
 Für dauerhafte Speicherung über Deploys hinweg kannst du Supabase nutzen.
 
+## Auto-Cleanup des Mirror-Channels
+- Standardmäßig löscht der Bot Nachrichten im Mirror-Channel, die älter als 48 Stunden sind (Job läuft alle 60 Minuten).
+- Konfiguration via Slash-Command oder ENV: `MESSAGE_CLEANUP_RETENTION_HOURS`, `MESSAGE_CLEANUP_INTERVAL_MINUTES`.
+
+## Countdown-Feature
+- Setze Datum/Uhrzeit (ISO) und Channel via `/set_countdown`.
+- Verhalten:
+  - Mehr als 7 Tage bis zum Start: Wöchentliche Nachricht am gleichen Wochentag/Uhrzeit wie das Ziel.
+  - Weniger als 7 Tage: Tägliche Nachricht zur Zieluhrzeit.
+  - Am Starttag: 00:00 und 12:00 Uhr verbleibende Stunden; zusätzlich 3h/2h/1h/10min vorher.
+- Optionale TZ per ENV `TIMEZONE` (Standard `Europe/Berlin`).
 ENV-Variablen (mindestens):
 ```
 SUPABASE_URL
