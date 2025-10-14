@@ -143,9 +143,16 @@ def _apply_runtime_config(data):
     cd_target = data.get("countdown_target_iso")
     if isinstance(cd_target, str) and cd_target:
         COUNTDOWN_TARGET_ISO = cd_target.strip()
+    else:
+        # Fallback auf ENV (für Erststart), falls vorhanden
+        env_target = os.getenv("COUNTDOWN_TARGET_ISO")
+        if env_target:
+            COUNTDOWN_TARGET_ISO = env_target.strip()
     cd_tz = data.get("countdown_timezone")
     if isinstance(cd_tz, str) and cd_tz:
         COUNTDOWN_TZ = cd_tz.strip()
+    else:
+        COUNTDOWN_TZ = os.getenv("TIMEZONE", COUNTDOWN_TZ)
     last_id = data.get("countdown_last_event_id")
     if isinstance(last_id, str) and last_id:
         COUNTDOWN_LAST_EVENT_ID = last_id

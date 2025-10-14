@@ -80,6 +80,15 @@ def load_config():
             if rows:
                 cfg = rows[0].get("config")
                 if isinstance(cfg, dict):
+                    # Wenn Supabase leer ist, aber lokale Datei Werte hat → migrieren
+                    if not cfg:
+                        file_cfg = load_json_file(CONFIG_PATH)
+                        if file_cfg:
+                            try:
+                                sb.table(SUPABASE_TABLE).upsert({"id": 1, "config": file_cfg}).execute()
+                                return file_cfg
+                            except Exception:
+                                pass
                     return cfg
         except Exception as exc:
             logger.warning("Supabase Load fehlgeschlagen: %s", exc)

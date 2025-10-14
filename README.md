@@ -117,6 +117,7 @@ Für dauerhafte Speicherung über Deploys hinweg kannst du Supabase nutzen.
   - Weniger als 7 Tage: Tägliche Nachricht zur Zieluhrzeit.
   - Am Starttag: 00:00 und 12:00 Uhr verbleibende Stunden; zusätzlich 3h/2h/1h/10min vorher.
 - Optionale TZ per ENV `TIMEZONE` (Standard `Europe/Berlin`).
+ - Persistenz: Countdown-Channel, Ziel und letzte Bot-Message-ID werden in Supabase (oder `config.json`) gespeichert. Beim Erststart ohne Supabase-Inhalt werden vorhandene Datei-Werte automatisch migriert.
 
 ## Projektstruktur (aufgeräumt)
 Die wichtigsten Module und deren Aufgaben:
