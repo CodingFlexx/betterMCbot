@@ -58,6 +58,10 @@ In der `server.properties`:
   - `-whitelist <name>`: Fügt Spieler zur Whitelist hinzu
   - `-ping`: Zeigt Online-Status und Spielerliste via Query
 
+### Betrieb ohne Minecraft-Server (degradierter Modus)
+- Der Bot startet auch, wenn keine RCON/Query-Parameter gesetzt sind.
+- Dann sind nur reine Discord-Features aktiv; Brücke/Whitelist/Ping reagieren mit Hinweisen oder sind deaktiviert.
+
 ## Fehlerbehebung
 - Prüfe Railway-Logs, wenn der Bot nicht startet (fehlende Env-Vars werden explizit gemeldet).
 - Stelle sicher, dass die Ports/Firewall für RCON und Query erreichbar sind.
