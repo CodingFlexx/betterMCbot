@@ -1,0 +1,7 @@
+[service]
+name = "betterMCbot"
+startCommand = "python bot.py"
+# Optional: set a specific Python version if needed via Nixpacks env
+# [env]
+# PYTHON_VERSION = "3.12"
+
