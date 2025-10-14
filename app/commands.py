@@ -41,7 +41,7 @@ def register_text_commands(bot: commands.Bot, deps):
         except Exception:
             await ctx.send("Server ist offline")
 
-    @bot.command(name='wielange')
+    @bot.command(name='wielange', aliases=['countdown'])
     async def wielange(ctx):
         if not deps["COUNTDOWN_TARGET_ISO"]:
             await ctx.send("Kein Countdown-Ziel gesetzt.")
