@@ -73,18 +73,55 @@ GITHUB_POLL_INTERVAL_SECONDS="120"  # optional
 ```
 
 Hinweise:
-- Es wird das öffentliche GitHub-API-Endpoint genutzt (ohne Token). Für private Repos bräuchte man ein Token und angepasste Auth-Header.
+- Standard: Polling des öffentlichen GitHub-API-Endpoints (ohne Token). Für private Repos bräuchte man ein Token und angepasste Auth-Header.
 - Beim ersten Start wird nur der neueste Commit als Referenz gemerkt; neue Commits seitdem werden gepostet.
+
+### Webhook (Echtzeit)
+Statt Polling kannst du Webhooks aktivieren:
+
+1) Setze in Railway-Variables `GITHUB_WEBHOOK_SECRET` (beliebiger geheimer String).
+2) Stelle sicher, dass der Service als Web läuft (Procfile nutzt `web: python bot.py`).
+3) GitHub-Repo → Settings → Webhooks → Add webhook:
+   - Payload URL: `https://<deine-railway-domain>/github`
+   - Content type: `application/json`
+   - Secret: derselbe Wert wie `GITHUB_WEBHOOK_SECRET`
+   - Events: "Just the push event" (oder was du brauchst)
+4) Wenn `GITHUB_WEBHOOK_SECRET` gesetzt ist, wird Polling automatisch deaktiviert.
 
 ## Konfiguration via Slash-Commands
 Die wichtigsten Einstellungen lassen sich jetzt direkt in Discord setzen (nur Nutzer mit "Manage Server"):
 
 - `/set_server_channel channel:<#channel>`: Setzt den Discord-Channel für die Minecraft-Brücke.
 - `/set_githubupdate_channel repo:owner/repo channel:<#channel> [poll_interval_seconds:120]`: Aktiviert GitHub-Updates für ein Repo in einem Channel.
+- `/change_prefix prefix:<text>`: Ändert das Prefix für klassische Text-Commands (z. B. `-whitelist`).
 - `/disable_github`: Deaktiviert die GitHub-Updates.
 - `/show_config`: Zeigt die aktuelle Konfiguration.
 
-Persistenz: Die Einstellungen werden in `config.json` im Projektverzeichnis gespeichert (überschreiben Environment-Werte zur Laufzeit).
+Persistenz: Die Einstellungen werden in `config.json` im Projektverzeichnis gespeichert (überschreiben Environment-Werte zur Laufzeit). Bei Neu-Deploys ohne Persistenz muss neu gesetzt werden.
+
+## Optionale Persistenz mit Supabase
+Für dauerhafte Speicherung über Deploys hinweg kannst du Supabase nutzen.
+
+ENV-Variablen (mindestens):
+```
+SUPABASE_URL
+SUPABASE_ANON_KEY  # oder SUPABASE_SERVICE_ROLE_KEY
+SUPABASE_TABLE=bot_config
+```
+
+Schema (einfachste Variante, eine Zeile):
+```sql
+create table if not exists bot_config (
+  id int primary key default 1,
+  config jsonb
+);
+insert into bot_config (id, config) values (1, '{}'::jsonb)
+on conflict (id) do nothing;
+```
+
+Hinweise:
+- Der Bot macht ein Upsert auf `id = 1` und speichert die komplette Konfiguration als JSON.
+- Ohne Supabase fällt der Bot automatisch auf Dateispeicherung (`config.json`) zurück.
 
 ## Fehlerbehebung
 - Prüfe Railway-Logs, wenn der Bot nicht startet (fehlende Env-Vars werden explizit gemeldet).

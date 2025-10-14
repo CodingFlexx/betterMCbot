@@ -11,9 +11,13 @@ from mcipc.rcon.je import Client
 from mcipc.query import Client as QueryClient
 import asyncio
 import aiohttp
+from aiohttp import web
 import logging
 import json
 from typing import Optional
+import hmac
+import hashlib
+from supabase import create_client
 
 load_dotenv()
 
@@ -27,6 +31,11 @@ GITHUB_REPO = os.getenv("GITHUB_REPO")  # z.B. "owner/repo"
 GITHUB_UPDATES_CHANNEL_ID = os.getenv("GITHUB_UPDATES_CHANNEL_ID")
 GITHUB_POLL_INTERVAL_SECONDS = os.getenv("GITHUB_POLL_INTERVAL_SECONDS", "120")
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.json")
+GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_TABLE = os.getenv("SUPABASE_TABLE", "bot_config")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("betterMCbot")
@@ -45,6 +54,7 @@ QUERY_PORT_INT = _parse_int(QUERY_PORT)
 CHAT_CHANNEL_ID_INT = _parse_int(CHAT_CHANNEL_ID)
 GITHUB_UPDATES_CHANNEL_ID_INT = _parse_int(GITHUB_UPDATES_CHANNEL_ID)
 GITHUB_POLL_INTERVAL = _parse_int(GITHUB_POLL_INTERVAL_SECONDS) or 120
+WEBHOOK_ACTIVE = bool(GITHUB_WEBHOOK_SECRET)
 
 HAS_RCON = bool(SERVER_IP and RCON_PASSWORD and RCON_PORT_INT)
 HAS_QUERY = bool(SERVER_IP and QUERY_PORT_INT)
@@ -52,6 +62,64 @@ HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
 HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
 
 _last_seen_commit_sha = None
+_supabase = None
+
+def _init_supabase():
+    global _supabase
+    if _supabase is not None:
+        return
+    if not SUPABASE_URL:
+        return
+    key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY
+    if not key:
+        return
+    try:
+        _supabase = create_client(SUPABASE_URL, key)
+        logger.info("Supabase-Client initialisiert")
+    except Exception as exc:
+        logger.warning("Supabase-Init fehlgeschlagen: %s", exc)
+
+def _load_config_from_supabase():
+    if _supabase is None:
+        return None
+    try:
+        res = _supabase.table(SUPABASE_TABLE).select("config").eq("id", 1).limit(1).execute()
+        rows = getattr(res, "data", []) or []
+        if not rows:
+            return {}
+        cfg = rows[0].get("config")
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception as exc:
+        logger.warning("Supabase Load fehlgeschlagen: %s", exc)
+        return None
+
+def _save_config_to_supabase(data):
+    if _supabase is None:
+        return False
+    try:
+        _supabase.table(SUPABASE_TABLE).upsert({"id": 1, "config": data}).execute()
+        return True
+    except Exception as exc:
+        logger.warning("Supabase Save fehlgeschlagen: %s", exc)
+        return False
+
+def load_config():
+    _init_supabase()
+    data = _load_config_from_supabase()
+    if data is None:
+        data = _load_config_from_file()
+    return data or {}
+
+def save_config(data):
+    saved = _save_config_to_supabase(data)
+    if not saved:
+        _save_config_to_file(data)
+
+# Dynamisches Prefix (per Slash-Command änderbar)
+COMMAND_PREFIX = "-"
+
+def get_command_prefix(_bot, _message):
+    return COMMAND_PREFIX
 
 def _load_config_from_file():
     try:
@@ -74,6 +142,7 @@ def _save_config_to_file(data):
 def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
     global HAS_BRIDGE, HAS_GITHUB
+    global COMMAND_PREFIX
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -91,10 +160,14 @@ def _apply_runtime_config(data):
     if poll_int:
         GITHUB_POLL_INTERVAL = poll_int
 
+    prefix_cfg = data.get("command_prefix")
+    if isinstance(prefix_cfg, str) and prefix_cfg:
+        COMMAND_PREFIX = prefix_cfg
+
     HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
     HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
 
-_apply_runtime_config(_load_config_from_file())
+_apply_runtime_config(load_config())
 
 async def fetch_latest_commits(session, repo_full_name):
     url = f"https://api.github.com/repos/{repo_full_name}/commits"
@@ -111,7 +184,7 @@ async def github_updates_task():
     async with aiohttp.ClientSession() as session:
         while not bot.is_closed():
             try:
-                if not HAS_GITHUB:
+                if not HAS_GITHUB or WEBHOOK_ACTIVE:
                     await asyncio.sleep(GITHUB_POLL_INTERVAL)
                     continue
                 channel = bot.get_channel(GITHUB_UPDATES_CHANNEL_ID_INT)
@@ -146,11 +219,9 @@ async def github_updates_task():
                 logger.warning("GitHub Updates Fehler: %s", exc)
             await asyncio.sleep(GITHUB_POLL_INTERVAL)
 
-discord_command_prefix = "-"
-
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(description="Discord Chatbot", command_prefix=discord_command_prefix, intents=intents)
+bot = commands.Bot(description="Discord Chatbot", command_prefix=get_command_prefix, intents=intents)
 
 
 @bot.event
@@ -166,6 +237,8 @@ async def on_ready():
     )
     if HAS_GITHUB:
         bot.loop.create_task(github_updates_task())
+    if WEBHOOK_ACTIVE:
+        bot.loop.create_task(start_web_server())
     try:
         await bot.tree.sync()
         logger.info("Slash-Commands synchronisiert")
@@ -186,7 +259,7 @@ async def on_message(message):
         return
     try:
         with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
-            client.say("[Discord] " + message.author.name + ": " + message.content)
+        client.say("[Discord] " + message.author.name + ": " + message.content)
     except Exception as exc:
         logger.warning("RCON Send fehlgeschlagen: %s", exc)
 
@@ -229,19 +302,17 @@ async def ping(ctx):
 #            res =
 
 
-bot.run(TOKEN)
-
-# ------------------------------
-# Slash Commands (Konfiguration)
-# ------------------------------
+ # ------------------------------
+ # Slash Commands (Konfiguration)
+ # ------------------------------
 
 @bot.tree.command(name="set_server_channel", description="Setzt den Discord-Channel für die Minecraft-Brücke")
 @app_commands.describe(channel="Ziel-Channel für Brücke")
 @app_commands.default_permissions(manage_guild=True)
 async def set_server_channel(interaction: discord.Interaction, channel: discord.TextChannel):
-    data = _load_config_from_file()
+    data = load_config()
     data["chat_channel_id"] = channel.id
-    _save_config_to_file(data)
+    save_config(data)
     _apply_runtime_config(data)
     await interaction.response.send_message(f"Brücken-Channel gesetzt auf {channel.mention}.", ephemeral=True)
 
@@ -255,12 +326,12 @@ async def set_githubupdate_channel(interaction: discord.Interaction, repo: str, 
     if "/" not in repo:
         await interaction.response.send_message("Ungültiges Repo-Format. Erwartet: owner/repo", ephemeral=True)
         return
-    data = _load_config_from_file()
+    data = load_config()
     data["github_repo"] = repo
     data["github_updates_channel_id"] = channel.id
     if poll_interval_seconds and poll_interval_seconds > 0:
         data["github_poll_interval_seconds"] = poll_interval_seconds
-    _save_config_to_file(data)
+    save_config(data)
     _apply_runtime_config(data)
     _last_seen_commit_sha = None
     await interaction.response.send_message(f"GitHub-Updates gesetzt: {repo} → {channel.mention}.", ephemeral=True)
@@ -269,10 +340,10 @@ async def set_githubupdate_channel(interaction: discord.Interaction, repo: str, 
 @bot.tree.command(name="disable_github", description="Deaktiviert GitHub-Commit-Updates")
 @app_commands.default_permissions(manage_guild=True)
 async def disable_github(interaction: discord.Interaction):
-    data = _load_config_from_file()
+    data = load_config()
     data.pop("github_repo", None)
     data.pop("github_updates_channel_id", None)
-    _save_config_to_file(data)
+    save_config(data)
     _apply_runtime_config(data)
     await interaction.response.send_message("GitHub-Updates deaktiviert.", ephemeral=True)
 
@@ -281,6 +352,7 @@ async def disable_github(interaction: discord.Interaction):
 @app_commands.default_permissions(manage_guild=True)
 async def show_config(interaction: discord.Interaction):
     data = {
+        "command_prefix": COMMAND_PREFIX,
         "bridge_channel_id": CHAT_CHANNEL_ID_INT,
         "github_repo": GITHUB_REPO,
         "github_updates_channel_id": GITHUB_UPDATES_CHANNEL_ID_INT,
@@ -294,3 +366,79 @@ async def show_config(interaction: discord.Interaction):
     }
     pretty = json.dumps(data, ensure_ascii=False, indent=2)
     await interaction.response.send_message(f"```json\n{pretty}\n```", ephemeral=True)
+
+
+@bot.tree.command(name="change_prefix", description="Ändert das Bot-Prefix für Textcommands")
+@app_commands.describe(prefix="Neues Prefix, z. B. ! oder --")
+@app_commands.default_permissions(manage_guild=True)
+async def change_prefix(interaction: discord.Interaction, prefix: str):
+    global COMMAND_PREFIX
+    prefix = prefix.strip()
+    if not prefix:
+        await interaction.response.send_message("Prefix darf nicht leer sein.", ephemeral=True)
+        return
+    if len(prefix) > 5:
+        await interaction.response.send_message("Prefix ist zu lang (max. 5 Zeichen).", ephemeral=True)
+        return
+    data = load_config()
+    data["command_prefix"] = prefix
+    save_config(data)
+    COMMAND_PREFIX = prefix
+    await interaction.response.send_message(f"Prefix geändert auf `{prefix}`.", ephemeral=True)
+
+
+# ------------------------------
+# Webhook Server (GitHub)
+# ------------------------------
+
+async def handle_health(request: web.Request) -> web.Response:
+    return web.Response(text="ok")
+
+async def github_webhook_handler(request: web.Request) -> web.Response:
+    if not WEBHOOK_ACTIVE:
+        return web.Response(status=404)
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    event = request.headers.get("X-GitHub-Event", "")
+    body = await request.read()
+    expected = "sha256=" + hmac.new(GITHUB_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return web.Response(status=401, text="invalid signature")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return web.Response(status=400, text="invalid json")
+    if event == "push":
+        repo_full_name = (payload.get("repository") or {}).get("full_name")
+        if GITHUB_REPO and repo_full_name and GITHUB_REPO != repo_full_name:
+            return web.Response(status=202, text="ignored repo")
+        channel_id = GITHUB_UPDATES_CHANNEL_ID_INT
+        if not channel_id:
+            return web.Response(status=202, text="no channel configured")
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except Exception:
+                return web.Response(status=202, text="channel not found")
+        commits = payload.get("commits") or []
+        if not commits and payload.get("head_commit"):
+            commits = [payload.get("head_commit")]
+        for c in commits:
+            author = ((c.get("author") or {}).get("name")) or "?"
+            message = c.get("message") or ""
+            url = c.get("url") or ""
+            await channel.send(f"[GitHub] {author}: {message}\n{url}")
+        return web.Response(text="ok")
+    return web.Response(text="ignored")
+
+async def start_web_server() -> None:
+    app = web.Application()
+    app.add_routes([web.get("/healthz", handle_health), web.post("/github", github_webhook_handler)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT") or 8080)
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info("Webhook Server listening on :%d", port)
+
+bot.run(TOKEN)
