@@ -53,10 +53,10 @@ def register_text_commands(bot: commands.Bot, deps):
         if remaining.total_seconds() <= 0:
             await ctx.send("Der Zeitpunkt ist bereits erreicht.")
             return
-        # Vorherige Bot-Countdown-Nachricht löschen + die auslösende Nachricht
+        # Vorherige Bot-Countdown-Nachricht löschen (immer im aktuellen Channel versuchen)
         get_last = deps.get("get_last_msg_id")
         set_last = deps.get("set_last_msg_id")
-        if get_last and set_last and deps.get("COUNTDOWN_CHANNEL_ID_INT") and ctx.channel.id == deps["COUNTDOWN_CHANNEL_ID_INT"]:
+        if get_last and set_last:
             try:
                 last_id = get_last()
                 if last_id:
@@ -66,12 +66,13 @@ def register_text_commands(bot: commands.Bot, deps):
                             await old.delete()
                     except Exception:
                         pass
-                try:
-                    await ctx.message.delete()
-                except Exception:
-                    pass
             except Exception:
                 pass
+        # Auslösende Nachricht löschen (benötigt Manage Messages; sonst ignorieren)
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
         sent = await ctx.send("Verbleibende Zeit: " + deps["fmt_td"](remaining))
         if set_last:
             set_last(sent.id)
