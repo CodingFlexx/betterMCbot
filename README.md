@@ -62,6 +62,30 @@ In der `server.properties`:
 - Der Bot startet auch, wenn keine RCON/Query-Parameter gesetzt sind.
 - Dann sind nur reine Discord-Features aktiv; Brücke/Whitelist/Ping reagieren mit Hinweisen oder sind deaktiviert.
 
+## GitHub Commit-Updates
+Der Bot kann neue Commits eines Repos periodisch abfragen und in einen Channel posten.
+
+Umgebungsvariablen:
+```
+GITHUB_REPO="owner/repo"
+GITHUB_UPDATES_CHANNEL_ID="123456789012345678"
+GITHUB_POLL_INTERVAL_SECONDS="120"  # optional
+```
+
+Hinweise:
+- Es wird das öffentliche GitHub-API-Endpoint genutzt (ohne Token). Für private Repos bräuchte man ein Token und angepasste Auth-Header.
+- Beim ersten Start wird nur der neueste Commit als Referenz gemerkt; neue Commits seitdem werden gepostet.
+
+## Konfiguration via Slash-Commands
+Die wichtigsten Einstellungen lassen sich jetzt direkt in Discord setzen (nur Nutzer mit "Manage Server"):
+
+- `/set_server_channel channel:<#channel>`: Setzt den Discord-Channel für die Minecraft-Brücke.
+- `/set_githubupdate_channel repo:owner/repo channel:<#channel> [poll_interval_seconds:120]`: Aktiviert GitHub-Updates für ein Repo in einem Channel.
+- `/disable_github`: Deaktiviert die GitHub-Updates.
+- `/show_config`: Zeigt die aktuelle Konfiguration.
+
+Persistenz: Die Einstellungen werden in `config.json` im Projektverzeichnis gespeichert (überschreiben Environment-Werte zur Laufzeit).
+
 ## Fehlerbehebung
 - Prüfe Railway-Logs, wenn der Bot nicht startet (fehlende Env-Vars werden explizit gemeldet).
 - Stelle sicher, dass die Ports/Firewall für RCON und Query erreichbar sind.
