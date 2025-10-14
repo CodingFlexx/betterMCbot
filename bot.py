@@ -75,6 +75,7 @@ COUNTDOWN_TARGET_ISO = None  # ISO-String ohne/mit TZ; naive wird in COUNTDOWN_T
 COUNTDOWN_TZ = DEFAULT_TIMEZONE
 COUNTDOWN_LAST_EVENT_ID = None
 COUNTDOWN_LAST_MESSAGE_ID = None
+COUNTDOWN_LAST_TRIGGER_ID = None
 
 HAS_RCON = bool(SERVER_IP and RCON_PASSWORD and RCON_PORT_INT)
 HAS_QUERY = bool(SERVER_IP and QUERY_PORT_INT)
@@ -104,7 +105,7 @@ def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
     global HAS_BRIDGE, HAS_GITHUB
     global COMMAND_PREFIX
-    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID
+    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID, COUNTDOWN_LAST_TRIGGER_ID
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -162,6 +163,12 @@ def _apply_runtime_config(data):
             COUNTDOWN_LAST_MESSAGE_ID = int(last_msg_id)
         except Exception:
             COUNTDOWN_LAST_MESSAGE_ID = None
+    last_trig_id = data.get("countdown_last_trigger_id")
+    if last_trig_id is not None:
+        try:
+            COUNTDOWN_LAST_TRIGGER_ID = int(last_trig_id)
+        except Exception:
+            COUNTDOWN_LAST_TRIGGER_ID = None
 
     HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
     HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
@@ -284,6 +291,8 @@ async def on_ready():
         "fmt_td": task_fmt_td,
         "get_last_msg_id": lambda: COUNTDOWN_LAST_MESSAGE_ID,
         "set_last_msg_id": lambda mid: _save_last_countdown_message_id(mid),
+        "get_last_trigger_id": lambda: COUNTDOWN_LAST_TRIGGER_ID,
+        "set_last_trigger_id": lambda mid: _save_last_countdown_trigger_id(mid),
         "load_config": load_config,
         "save_config": save_config,
         "apply_config": _apply_runtime_config,
@@ -540,6 +549,13 @@ def _save_last_countdown_message_id(mid: int) -> None:
     COUNTDOWN_LAST_MESSAGE_ID = mid
     data = load_config()
     data["countdown_last_message_id"] = mid
+    save_config(data)
+
+def _save_last_countdown_trigger_id(mid: int) -> None:
+    global COUNTDOWN_LAST_TRIGGER_ID
+    COUNTDOWN_LAST_TRIGGER_ID = mid
+    data = load_config()
+    data["countdown_last_trigger_id"] = mid
     save_config(data)
 
 bot.run(TOKEN)

@@ -53,10 +53,12 @@ def register_text_commands(bot: commands.Bot, deps):
         if remaining.total_seconds() <= 0:
             await ctx.send("Der Zeitpunkt ist bereits erreicht.")
             return
-        # Vorherige Bot-Countdown-Nachricht löschen (immer im aktuellen Channel versuchen)
+        # Vorherige Bot-Countdown-Nachricht + vorherige Trigger-Nachricht löschen
         get_last = deps.get("get_last_msg_id")
         set_last = deps.get("set_last_msg_id")
-        if get_last and set_last:
+        get_trig = deps.get("get_last_trigger_id")
+        set_trig = deps.get("set_last_trigger_id")
+        if get_last:
             try:
                 last_id = get_last()
                 if last_id:
@@ -68,14 +70,24 @@ def register_text_commands(bot: commands.Bot, deps):
                         pass
             except Exception:
                 pass
-        # Auslösende Nachricht löschen (benötigt Manage Messages; sonst ignorieren)
-        try:
-            await ctx.message.delete()
-        except Exception:
-            pass
+        if get_trig:
+            try:
+                trig_id = get_trig()
+                if trig_id and trig_id != ctx.message.id:
+                    try:
+                        old_trig = await ctx.channel.fetch_message(trig_id)
+                        if old_trig and old_trig.author == ctx.author:
+                            await old_trig.delete()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        # Aktuelle Nachricht stehen lassen, neue Antwort senden und IDs speichern
         sent = await ctx.send("Verbleibende Zeit: " + deps["fmt_td"](remaining))
         if set_last:
             set_last(sent.id)
+        if set_trig:
+            set_trig(ctx.message.id)
 
 
 def register_slash_commands(bot: commands.Bot, deps):
