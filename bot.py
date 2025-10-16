@@ -529,7 +529,7 @@ async def set_countdown(interaction: discord.Interaction, target_iso: str, chann
 
 @bot.tree.command(name="set_countdown_role", description="Setzt die zu erwähnende Rolle für Countdown-Nachrichten")
 @app_commands.describe(role="Rolle, die in Auto-Countdowns erwähnt wird")
-@app_commands.default_permissions(manage_guild=True)
+@app_commands.default_permissions(administrator=True)
 async def set_countdown_role(interaction: discord.Interaction, role: discord.Role):
     data = load_config()
     data["countdown_role_id"] = role.id

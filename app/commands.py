@@ -205,7 +205,7 @@ def register_slash_commands(bot: commands.Bot, deps):
 
     @bot.tree.command(name="set_countdown_role", description="Setzt die zu erwähnende Rolle für Auto-Countdowns")
     @app_commands.describe(role="Rolle, die in automatischen Countdown-Nachrichten erwähnt wird")
-    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.default_permissions(administrator=True)
     async def set_countdown_role(interaction: discord.Interaction, role: discord.Role):
         data = load_config()
         data["countdown_role_id"] = role.id
@@ -214,7 +214,7 @@ def register_slash_commands(bot: commands.Bot, deps):
         await interaction.response.send_message(f"Countdown-Rolle gesetzt: {role.mention}", ephemeral=True)
 
     @bot.tree.command(name="disable_countdown_role", description="Entfernt die Rolle aus Auto-Countdowns")
-    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.default_permissions(administrator=True)
     async def disable_countdown_role(interaction: discord.Interaction):
         data = load_config()
         data.pop("countdown_role_id", None)
