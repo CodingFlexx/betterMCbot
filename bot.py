@@ -258,6 +258,54 @@ async def on_ready():
                     await channel.send(f"[GitHub] {author}: {message}\n{url}")
                 from aiohttp import web
                 return web.Response(text="ok")
+            elif event == "pull_request":
+                repo_full_name = (payload.get("repository") or {}).get("full_name")
+                if GITHUB_REPO and repo_full_name and GITHUB_REPO != repo_full_name:
+                    from aiohttp import web
+                    return web.Response(status=202, text="ignored repo")
+                channel_id = GITHUB_UPDATES_CHANNEL_ID_INT
+                if not channel_id:
+                    from aiohttp import web
+                    return web.Response(status=202, text="no channel configured")
+                channel = bot.get_channel(channel_id)
+                if channel is None:
+                    try:
+                        channel = await bot.fetch_channel(channel_id)
+                    except Exception:
+                        from aiohttp import web
+                        return web.Response(status=202, text="channel not found")
+                action = payload.get("action", "")
+                pr = payload.get("pull_request") or {}
+                pr_number = pr.get("number", "?")
+                pr_title = pr.get("title", "Unbekannt")
+                pr_url = pr.get("html_url", "")
+                pr_user = (pr.get("user") or {}).get("login", "?")
+                pr_state = pr.get("state", "")
+                
+                # Nachrichten für verschiedene PR-Aktionen
+                if action == "opened":
+                    msg = f"🔔 **Neue Pull Request #{pr_number}** von **{pr_user}**\n**Titel:** {pr_title}\n{pr_url}"
+                elif action == "closed":
+                    if pr.get("merged", False):
+                        merged_by = (pr.get("merged_by") or {}).get("login", "?")
+                        msg = f"✅ **Pull Request #{pr_number} gemerged** von **{merged_by}**\n**Titel:** {pr_title}\n{pr_url}"
+                    else:
+                        msg = f"❌ **Pull Request #{pr_number} geschlossen** (nicht gemerged)\n**Titel:** {pr_title}\n{pr_url}"
+                elif action == "reopened":
+                    msg = f"🔄 **Pull Request #{pr_number} wiedereröffnet** von **{pr_user}**\n**Titel:** {pr_title}\n{pr_url}"
+                elif action == "ready_for_review":
+                    msg = f"👀 **Pull Request #{pr_number} ist bereit für Review**\n**Titel:** {pr_title}\n{pr_url}"
+                elif action == "review_requested":
+                    requested_reviewer = (payload.get("requested_reviewer") or {}).get("login", "?")
+                    msg = f"👥 **Review angefordert** für PR #{pr_number} von **{requested_reviewer}**\n**Titel:** {pr_title}\n{pr_url}"
+                else:
+                    # Andere Aktionen ignorieren oder generisch behandeln
+                    from aiohttp import web
+                    return web.Response(status=202, text=f"ignored action: {action}")
+                
+                await channel.send(msg)
+                from aiohttp import web
+                return web.Response(text="ok")
             from aiohttp import web
             return web.Response(text="ignored")
         async def verify_and_handle_mc(request):
