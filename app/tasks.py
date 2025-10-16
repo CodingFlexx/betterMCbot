@@ -192,7 +192,17 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
                                 await old.delete()
                         except Exception:
                             pass
-                    sent = await channel.send(message)
+                    role_id = cfg.get("COUNTDOWN_ROLE_ID_INT")
+                    if role_id:
+                        try:
+                            role = channel.guild.get_role(role_id) or await channel.guild.fetch_role(role_id)
+                            # Rolle erwähnen via Mention-String, aber nicht bei manuellen mc!wielange, nur Auto-Scheduler
+                            message_to_send = f"{role.mention} {message}"
+                        except Exception:
+                            message_to_send = message
+                    else:
+                        message_to_send = message
+                    sent = await channel.send(message_to_send)
                     set_last_msg_id(sent.id)
                 except Exception:
                     pass

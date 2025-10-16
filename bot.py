@@ -76,6 +76,7 @@ COUNTDOWN_TZ = DEFAULT_TIMEZONE
 COUNTDOWN_LAST_EVENT_ID = None
 COUNTDOWN_LAST_MESSAGE_ID = None
 COUNTDOWN_LAST_TRIGGER_ID = None
+COUNTDOWN_ROLE_ID_INT = None
 
 HAS_RCON = bool(SERVER_IP and RCON_PASSWORD and RCON_PORT_INT)
 HAS_QUERY = bool(SERVER_IP and QUERY_PORT_INT)
@@ -105,7 +106,7 @@ def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
     global HAS_BRIDGE, HAS_GITHUB
     global COMMAND_PREFIX
-    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID, COUNTDOWN_LAST_TRIGGER_ID
+    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID, COUNTDOWN_LAST_TRIGGER_ID, COUNTDOWN_ROLE_ID_INT
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -169,6 +170,12 @@ def _apply_runtime_config(data):
             COUNTDOWN_LAST_TRIGGER_ID = int(last_trig_id)
         except Exception:
             COUNTDOWN_LAST_TRIGGER_ID = None
+
+    role_id = data.get("countdown_role_id")
+    try:
+        COUNTDOWN_ROLE_ID_INT = _parse_int(str(role_id)) if role_id is not None else None
+    except Exception:
+        COUNTDOWN_ROLE_ID_INT = None
 
     HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
     HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
@@ -302,6 +309,7 @@ async def on_ready():
                 "COUNTDOWN_CHANNEL_ID_INT": COUNTDOWN_CHANNEL_ID_INT,
                 "COUNTDOWN_TARGET_ISO": COUNTDOWN_TARGET_ISO,
                 "COUNTDOWN_TZ": COUNTDOWN_TZ,
+                "COUNTDOWN_ROLE_ID_INT": COUNTDOWN_ROLE_ID_INT,
             },
             task_parse_iso,
             task_fmt_td,
@@ -343,6 +351,7 @@ async def on_ready():
             "countdown_channel_id": COUNTDOWN_CHANNEL_ID_INT,
             "countdown_target_iso": COUNTDOWN_TARGET_ISO,
             "countdown_timezone": COUNTDOWN_TZ,
+            "countdown_role_id": COUNTDOWN_ROLE_ID_INT,
             "countdown_last_message_id": COUNTDOWN_LAST_MESSAGE_ID,
             "features": {
                 "bridge": HAS_BRIDGE,
@@ -448,6 +457,7 @@ async def show_config(interaction: discord.Interaction):
         "countdown_channel_id": COUNTDOWN_CHANNEL_ID_INT,
         "countdown_target_iso": COUNTDOWN_TARGET_ISO,
         "countdown_timezone": COUNTDOWN_TZ,
+        "countdown_role_id": COUNTDOWN_ROLE_ID_INT,
         "features": {
             "bridge": HAS_BRIDGE,
             "rcon": HAS_RCON,
@@ -515,6 +525,17 @@ async def set_countdown(interaction: discord.Interaction, target_iso: str, chann
     save_config(data)
     _apply_runtime_config(data)
     await interaction.response.send_message(f"Countdown gesetzt: {target_iso} ({tzname}) → {channel.mention}", ephemeral=True)
+
+
+@bot.tree.command(name="set_countdown_role", description="Setzt die zu erwähnende Rolle für Countdown-Nachrichten")
+@app_commands.describe(role="Rolle, die in Auto-Countdowns erwähnt wird")
+@app_commands.default_permissions(manage_guild=True)
+async def set_countdown_role(interaction: discord.Interaction, role: discord.Role):
+    data = load_config()
+    data["countdown_role_id"] = role.id
+    save_config(data)
+    _apply_runtime_config(data)
+    await interaction.response.send_message(f"Countdown-Rolle gesetzt: {role.mention}", ephemeral=True)
 
 
 @bot.tree.command(name="disable_countdown", description="Deaktiviert den Countdown")
