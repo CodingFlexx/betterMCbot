@@ -1,4 +1,5 @@
 import asyncio
+import math
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import aiohttp
@@ -175,7 +176,8 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
                                         break
             else:
                 if now.weekday() == target.weekday() and now.hour == target.hour and now.minute == target.minute:
-                    weeks_left = int(remaining.days // 7)
+                    # Aufrunden auf ganze Wochen, um Off-by-One durch Sekunden/DST zu vermeiden
+                    weeks_left = int(math.ceil(remaining.total_seconds() / (7 * 24 * 3600)))
                     if weeks_left < 1:
                         weeks_left = 1
                     message = f"Es sind noch {weeks_left} Wochen bis zum Serverstart verbleibend."
