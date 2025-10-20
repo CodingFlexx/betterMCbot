@@ -5,7 +5,6 @@ os.environ.setdefault("DISCORD_DISABLE_VOICE", "1")
 
 import discord
 from discord.ext import commands
-from discord import app_commands
 from dotenv import load_dotenv
 from mcipc.rcon.je import Client
 from mcipc.query import Client as QueryClient
@@ -345,9 +344,13 @@ async def on_ready():
                     pass
             return web.Response(text="ok")
         bot.loop.create_task(task_start_web(bot, logger, {"PORT": os.getenv("PORT")}, verify_and_handle_github, verify_and_handle_mc))
-    # Auto-Cleanup-Job starten
+    # Auto-Cleanup-Job starten (zentrale Implementierung aus app.tasks nutzen)
     if CHAT_CHANNEL_ID_INT and (MESSAGE_CLEANUP_RETENTION_HOURS_INT or 0) > 0:
-        bot.loop.create_task(message_cleanup_task())
+        bot.loop.create_task(task_cleanup(bot, logger, {
+            "CHAT_CHANNEL_ID_INT": CHAT_CHANNEL_ID_INT,
+            "MESSAGE_CLEANUP_RETENTION_HOURS_INT": MESSAGE_CLEANUP_RETENTION_HOURS_INT,
+            "MESSAGE_CLEANUP_INTERVAL_MINUTES_INT": MESSAGE_CLEANUP_INTERVAL_MINUTES_INT,
+        }))
     # Countdown-Job starten
     if COUNTDOWN_CHANNEL_ID_INT and COUNTDOWN_TARGET_ISO:
         bot.loop.create_task(task_countdown(
@@ -445,209 +448,6 @@ async def on_message(message):
 #            res =
 
 
- # ------------------------------
- # Slash Commands (Konfiguration)
- # ------------------------------
-
-@bot.tree.command(name="set_server_channel", description="Setzt den Discord-Channel für die Minecraft-Brücke")
-@app_commands.describe(channel="Ziel-Channel für Brücke")
-@app_commands.default_permissions(manage_guild=True)
-async def set_server_channel(interaction: discord.Interaction, channel: discord.TextChannel):
-    data = load_config()
-    data["chat_channel_id"] = channel.id
-    save_config(data)
-    _apply_runtime_config(data)
-    await interaction.response.send_message(f"Brücken-Channel gesetzt auf {channel.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="set_githubupdate_channel", description="Konfiguriert Repo und Channel für GitHub-Commit-Updates")
-@app_commands.describe(repo="owner/repo", channel="Ziel-Channel", poll_interval_seconds="optional, Standard 120s")
-@app_commands.default_permissions(manage_guild=True)
-async def set_githubupdate_channel(interaction: discord.Interaction, repo: str, channel: discord.TextChannel, poll_interval_seconds: Optional[int] = None):
-    global _last_seen_commit_sha
-    repo = repo.strip()
-    if "/" not in repo:
-        await interaction.response.send_message("Ungültiges Repo-Format. Erwartet: owner/repo", ephemeral=True)
-        return
-    data = load_config()
-    data["github_repo"] = repo
-    data["github_updates_channel_id"] = channel.id
-    if poll_interval_seconds and poll_interval_seconds > 0:
-        data["github_poll_interval_seconds"] = poll_interval_seconds
-    save_config(data)
-    _apply_runtime_config(data)
-    _last_seen_commit_sha = None
-    await interaction.response.send_message(f"GitHub-Updates gesetzt: {repo} → {channel.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="disable_github", description="Deaktiviert GitHub-Commit-Updates")
-@app_commands.default_permissions(manage_guild=True)
-async def disable_github(interaction: discord.Interaction):
-    data = load_config()
-    data.pop("github_repo", None)
-    data.pop("github_updates_channel_id", None)
-    save_config(data)
-    _apply_runtime_config(data)
-    await interaction.response.send_message("GitHub-Updates deaktiviert.", ephemeral=True)
-
-
-@bot.tree.command(name="show_config", description="Zeigt die aktuelle Bot-Konfiguration")
-@app_commands.default_permissions(manage_guild=True)
-async def show_config(interaction: discord.Interaction):
-    data = {
-        "command_prefix": COMMAND_PREFIX,
-        "bridge_channel_id": CHAT_CHANNEL_ID_INT,
-        "github_repo": GITHUB_REPO,
-        "github_updates_channel_id": GITHUB_UPDATES_CHANNEL_ID_INT,
-        "github_poll_interval_seconds": GITHUB_POLL_INTERVAL,
-        "message_cleanup_retention_hours": MESSAGE_CLEANUP_RETENTION_HOURS_INT,
-        "message_cleanup_interval_minutes": MESSAGE_CLEANUP_INTERVAL_MINUTES_INT,
-        "countdown_channel_id": COUNTDOWN_CHANNEL_ID_INT,
-        "countdown_target_iso": COUNTDOWN_TARGET_ISO,
-        "countdown_timezone": COUNTDOWN_TZ,
-        "countdown_role_id": COUNTDOWN_ROLE_ID_INT,
-        "features": {
-            "bridge": HAS_BRIDGE,
-            "rcon": HAS_RCON,
-            "query": HAS_QUERY,
-            "github": HAS_GITHUB,
-        },
-    }
-    pretty = json.dumps(data, ensure_ascii=False, indent=2)
-    await interaction.response.send_message(f"```json\n{pretty}\n```", ephemeral=True)
-
-
-@bot.tree.command(name="change_prefix", description="Ändert das Bot-Prefix für Textcommands")
-@app_commands.describe(prefix="Neues Prefix, z. B. ! oder --")
-@app_commands.default_permissions(manage_guild=True)
-async def change_prefix(interaction: discord.Interaction, prefix: str):
-    global COMMAND_PREFIX
-    prefix = prefix.strip()
-    if not prefix:
-        await interaction.response.send_message("Prefix darf nicht leer sein.", ephemeral=True)
-        return
-    if len(prefix) > 5:
-        await interaction.response.send_message("Prefix ist zu lang (max. 5 Zeichen).", ephemeral=True)
-        return
-    data = load_config()
-    data["command_prefix"] = prefix
-    save_config(data)
-    COMMAND_PREFIX = prefix
-    await interaction.response.send_message(f"Prefix geändert auf `{prefix}`.", ephemeral=True)
-
-
-@bot.tree.command(name="set_cleanup", description="Setzt Aufbewahrungsdauer und Laufintervall für Auto-Cleanup")
-@app_commands.describe(retention_hours="Stunden bis zur Löschung (z. B. 48)", interval_minutes="Intervall in Minuten (z. B. 60)")
-@app_commands.default_permissions(manage_guild=True)
-async def set_cleanup(interaction: discord.Interaction, retention_hours: Optional[int] = None, interval_minutes: Optional[int] = None):
-    changed = []
-    data = load_config()
-    if retention_hours is not None and retention_hours >= 0:
-        data["message_cleanup_retention_hours"] = retention_hours
-        changed.append(f"retention={retention_hours}h")
-    if interval_minutes is not None and interval_minutes > 0:
-        data["message_cleanup_interval_minutes"] = interval_minutes
-        changed.append(f"interval={interval_minutes}m")
-    if not changed:
-        await interaction.response.send_message("Keine Änderungen übergeben.", ephemeral=True)
-        return
-    save_config(data)
-    _apply_runtime_config(data)
-    await interaction.response.send_message("Cleanup aktualisiert: " + ", ".join(changed), ephemeral=True)
-
-
-@bot.tree.command(name="set_countdown", description="Setzt Countdown-Ziel (ISO Datum/Zeit) und Ziel-Channel")
-@app_commands.describe(target_iso="z. B. 2025-12-31T17:00", channel="Ziel-Channel", timezone_name="z. B. Europe/Berlin")
-@app_commands.default_permissions(manage_guild=True)
-async def set_countdown(interaction: discord.Interaction, target_iso: str, channel: discord.TextChannel, timezone_name: Optional[str] = None):
-    tzname = timezone_name.strip() if isinstance(timezone_name, str) and timezone_name else COUNTDOWN_TZ
-    try:
-        _ = _parse_iso_to_aware_dt(target_iso, tzname)
-    except Exception:
-        await interaction.response.send_message("Ungültiges ISO-Datum. Beispiel: 2025-12-31T17:00", ephemeral=True)
-        return
-    data = load_config()
-    data["countdown_channel_id"] = channel.id
-    data["countdown_target_iso"] = target_iso
-    data["countdown_timezone"] = tzname
-    save_config(data)
-    _apply_runtime_config(data)
-    await interaction.response.send_message(f"Countdown gesetzt: {target_iso} ({tzname}) → {channel.mention}", ephemeral=True)
-
-
-@bot.tree.command(name="set_countdown_role", description="Setzt die zu erwähnende Rolle für Countdown-Nachrichten")
-@app_commands.describe(role="Rolle, die in Auto-Countdowns erwähnt wird")
-@app_commands.default_permissions(administrator=True)
-async def set_countdown_role(interaction: discord.Interaction, role: discord.Role):
-    data = load_config()
-    data["countdown_role_id"] = role.id
-    save_config(data)
-    _apply_runtime_config(data)
-    await interaction.response.send_message(f"Countdown-Rolle gesetzt: {role.mention}", ephemeral=True)
-
-
-@bot.tree.command(name="disable_countdown", description="Deaktiviert den Countdown")
-@app_commands.default_permissions(manage_guild=True)
-async def disable_countdown(interaction: discord.Interaction):
-    data = load_config()
-    data.pop("countdown_channel_id", None)
-    data.pop("countdown_target_iso", None)
-    data.pop("countdown_timezone", None)
-    save_config(data)
-    _apply_runtime_config(data)
-    await interaction.response.send_message("Countdown deaktiviert.", ephemeral=True)
-
-
-async def message_cleanup_task():
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        try:
-            if not CHAT_CHANNEL_ID_INT or (MESSAGE_CLEANUP_RETENTION_HOURS_INT or 0) <= 0:
-                await asyncio.sleep(MESSAGE_CLEANUP_INTERVAL_MINUTES_INT * 60)
-                continue
-            channel = bot.get_channel(CHAT_CHANNEL_ID_INT)
-            if channel is None:
-                try:
-                    channel = await bot.fetch_channel(CHAT_CHANNEL_ID_INT)
-                except Exception:
-                    await asyncio.sleep(MESSAGE_CLEANUP_INTERVAL_MINUTES_INT * 60)
-                    continue
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=MESSAGE_CLEANUP_RETENTION_HOURS_INT)
-            async for msg in channel.history(limit=200, oldest_first=False):
-                if msg.created_at and msg.created_at.replace(tzinfo=timezone.utc) < cutoff:
-                    try:
-                        await msg.delete()
-                    except Exception:
-                        pass
-        except Exception as exc:
-            logger.warning("Cleanup Fehler: %s", exc)
-        await asyncio.sleep(MESSAGE_CLEANUP_INTERVAL_MINUTES_INT * 60)
-
-def _parse_iso_to_aware_dt(iso_str: str, tz_name: str) -> datetime:
-    try:
-        dt = datetime.fromisoformat(iso_str)
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=ZoneInfo(tz_name))
-        return dt.astimezone(ZoneInfo(tz_name))
-    except Exception:
-        # Fallback: jetzt + 1 Tag
-        return (datetime.now(timezone.utc) + timedelta(days=1)).astimezone(ZoneInfo(tz_name))
-
-def _format_time_delta(delta: timedelta) -> str:
-    total_seconds = int(delta.total_seconds())
-    if total_seconds < 0:
-        total_seconds = 0
-    days, rem = divmod(total_seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes, _ = divmod(rem, 60)
-    parts = []
-    if days:
-        parts.append(f"{days} Tage")
-    if hours:
-        parts.append(f"{hours} Std")
-    if minutes and not days:
-        parts.append(f"{minutes} Min")
-    return ", ".join(parts) or "0 Min"
 
 def _save_last_countdown_message_id(mid: int) -> None:
     global COUNTDOWN_LAST_MESSAGE_ID
