@@ -201,7 +201,8 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
                             # Rolle erwähnen via Mention-String, aber nicht bei manuellen mc!wielange, nur Auto-Scheduler
                             message_to_send = f"{role.mention} {message}"
                         except Exception:
-                            message_to_send = message
+                            # Fallback: Nutze Mention-String direkt per ID, falls Role-Fetch scheitert
+                            message_to_send = f"<@&{int(role_id)}> {message}"
                     else:
                         message_to_send = message
                     sent = await channel.send(message_to_send)
