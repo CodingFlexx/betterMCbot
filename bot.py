@@ -12,6 +12,7 @@ import asyncio
 import aiohttp
 import logging
 import json
+import random
 from typing import Optional
 from app.settings import load_config, save_config
 from app.tasks import (
@@ -49,6 +50,13 @@ DEFAULT_TIMEZONE = os.getenv("TIMEZONE", "Europe/Berlin")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("betterMCbot")
+
+DEATH_CHAT_RESPONSES = [
+    "F",
+    "ooof",
+    "RIP",
+    "The dead ones are the deadliest",
+]
 
 if not TOKEN:
     raise SystemExit("Fehlende Environment Variable: DISCORD_TOKEN")
@@ -321,27 +329,44 @@ async def on_ready():
                 payload = json.loads(body.decode("utf-8"))
             except Exception:
                 return web.Response(status=400, text="invalid json")
-            event = payload.get("event")
-            content = payload.get("content") or ""
-            channel_id = CHAT_CHANNEL_ID_INT
-            if not channel_id:
-                return web.Response(status=202, text="no mirror channel")
-            channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
-            if event == "chat":
-                author = payload.get("author") or "MC"
-                await channel.send(f"[MC] {author}: {content}")
-            elif event == "join":
-                await channel.send(f"[MC] {content} ist beigetreten")
-            elif event == "leave":
-                await channel.send(f"[MC] {content} hat den Server verlassen")
-            elif event == "whitelistadd":
-                # optional, kann Client auslösen
-                try:
-                    with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
-                        wl = client.whitelist
-                        wl.add(str(content))
-                except Exception:
-                    pass
+              event = payload.get("event")
+              content = payload.get("content") or ""
+              channel_id = CHAT_CHANNEL_ID_INT
+              if not channel_id:
+                  return web.Response(status=202, text="no mirror channel")
+              channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+              if event == "chat":
+                  author = payload.get("author") or "MC"
+                  await channel.send(f"[MC] {author}: {content}")
+              elif event == "join":
+                  await channel.send(f"[MC] {content} ist beigetreten")
+              elif event == "leave":
+                  await channel.send(f"[MC] {content} hat den Server verlassen")
+              elif event == "death":
+                  player = payload.get("player") or payload.get("author")
+                  death_details = content.strip() if isinstance(content, str) else ""
+                  if player and death_details:
+                      discord_msg = f"[MC] 💀 {player} ist gestorben: {death_details}"
+                  elif player:
+                      discord_msg = f"[MC] 💀 {player} ist gestorben."
+                  else:
+                      discord_msg = f"[MC] 💀 {death_details or 'Ein Spieler ist gestorben.'}"
+                  await channel.send(discord_msg)
+                  if HAS_RCON:
+                      try:
+                          with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
+                              reply = random.choice(DEATH_CHAT_RESPONSES)
+                              client.say(f"[Bot] {reply}")
+                      except Exception as exc:
+                          logger.warning("RCON Death Reply fehlgeschlagen: %s", exc)
+              elif event == "whitelistadd":
+                  # optional, kann Client auslösen
+                  try:
+                      with Client(SERVER_IP, RCON_PORT_INT, passwd=RCON_PASSWORD) as client:
+                          wl = client.whitelist
+                          wl.add(str(content))
+                  except Exception:
+                      pass
             return web.Response(text="ok")
         bot.loop.create_task(task_start_web(bot, logger, {"PORT": os.getenv("PORT")}, verify_and_handle_github, verify_and_handle_mc))
     # Auto-Cleanup-Job starten (zentrale Implementierung aus app.tasks nutzen)
