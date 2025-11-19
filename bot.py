@@ -82,6 +82,7 @@ COUNTDOWN_TARGET_ISO = None  # ISO-String ohne/mit TZ; naive wird in COUNTDOWN_T
 COUNTDOWN_TZ = DEFAULT_TIMEZONE
 COUNTDOWN_LAST_EVENT_ID = None
 COUNTDOWN_LAST_MESSAGE_ID = None
+COUNTDOWN_LAST_AUTO_MESSAGE_ID = None
 COUNTDOWN_LAST_TRIGGER_ID = None
 COUNTDOWN_ROLE_ID_INT = None
 
@@ -113,7 +114,7 @@ def _apply_runtime_config(data):
     global CHAT_CHANNEL_ID_INT, GITHUB_REPO, GITHUB_UPDATES_CHANNEL_ID_INT, GITHUB_POLL_INTERVAL
     global HAS_BRIDGE, HAS_GITHUB
     global COMMAND_PREFIX
-    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID, COUNTDOWN_LAST_TRIGGER_ID, COUNTDOWN_ROLE_ID_INT
+    global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID, COUNTDOWN_LAST_AUTO_MESSAGE_ID, COUNTDOWN_LAST_TRIGGER_ID, COUNTDOWN_ROLE_ID_INT
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -171,6 +172,12 @@ def _apply_runtime_config(data):
             COUNTDOWN_LAST_MESSAGE_ID = int(last_msg_id)
         except Exception:
             COUNTDOWN_LAST_MESSAGE_ID = None
+    last_auto_msg_id = data.get("countdown_last_auto_message_id")
+    if last_auto_msg_id is not None:
+        try:
+            COUNTDOWN_LAST_AUTO_MESSAGE_ID = int(last_auto_msg_id)
+        except Exception:
+            COUNTDOWN_LAST_AUTO_MESSAGE_ID = None
     last_trig_id = data.get("countdown_last_trigger_id")
     if last_trig_id is not None:
         try:
@@ -395,8 +402,8 @@ async def on_ready():
             },
             task_parse_iso,
             task_fmt_td,
-            lambda: COUNTDOWN_LAST_MESSAGE_ID,
-            lambda mid: _save_last_countdown_message_id(mid)
+            lambda: COUNTDOWN_LAST_AUTO_MESSAGE_ID,
+            lambda mid: _save_last_countdown_auto_message_id(mid)
         ))
     # Commands registrieren
     deps = {
@@ -417,6 +424,7 @@ async def on_ready():
         "fmt_td": task_fmt_td,
         "get_last_msg_id": lambda: COUNTDOWN_LAST_MESSAGE_ID,
         "set_last_msg_id": lambda mid: _save_last_countdown_message_id(mid),
+        "get_last_auto_msg_id": lambda: COUNTDOWN_LAST_AUTO_MESSAGE_ID,
         "get_last_trigger_id": lambda: COUNTDOWN_LAST_TRIGGER_ID,
         "set_last_trigger_id": lambda mid: _save_last_countdown_trigger_id(mid),
         "load_config": load_config,
@@ -435,6 +443,7 @@ async def on_ready():
             "countdown_timezone": COUNTDOWN_TZ,
             "countdown_role_id": COUNTDOWN_ROLE_ID_INT,
             "countdown_last_message_id": COUNTDOWN_LAST_MESSAGE_ID,
+            "countdown_last_auto_message_id": COUNTDOWN_LAST_AUTO_MESSAGE_ID,
             "features": {
                 "bridge": HAS_BRIDGE,
                 "rcon": HAS_RCON,
@@ -485,6 +494,13 @@ def _save_last_countdown_message_id(mid: int) -> None:
     COUNTDOWN_LAST_MESSAGE_ID = mid
     data = load_config()
     data["countdown_last_message_id"] = mid
+    save_config(data)
+
+def _save_last_countdown_auto_message_id(mid: int) -> None:
+    global COUNTDOWN_LAST_AUTO_MESSAGE_ID
+    COUNTDOWN_LAST_AUTO_MESSAGE_ID = mid
+    data = load_config()
+    data["countdown_last_auto_message_id"] = mid
     save_config(data)
 
 def _save_last_countdown_trigger_id(mid: int) -> None:
