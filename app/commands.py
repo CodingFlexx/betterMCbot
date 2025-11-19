@@ -58,6 +58,7 @@ def register_text_commands(bot: commands.Bot, deps):
         set_last = deps.get("set_last_msg_id")
         get_trig = deps.get("get_last_trigger_id")
         set_trig = deps.get("set_last_trigger_id")
+        get_last_auto = deps.get("get_last_auto_msg_id")
         if get_last:
             try:
                 last_id = get_last()
@@ -66,6 +67,20 @@ def register_text_commands(bot: commands.Bot, deps):
                         old = await ctx.channel.fetch_message(last_id)
                         if old and old.author == bot.user:
                             await old.delete()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        else:
+            last_id = None
+        if get_last_auto:
+            try:
+                auto_id = get_last_auto()
+                if auto_id and auto_id != last_id:
+                    try:
+                        old_auto = await ctx.channel.fetch_message(auto_id)
+                        if old_auto and old_auto.author == bot.user:
+                            await old_auto.delete()
                     except Exception:
                         pass
             except Exception:
