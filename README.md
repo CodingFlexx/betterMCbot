@@ -140,6 +140,7 @@ Weitere Dateien:
 - `requirements.txt`: Python-Abhängigkeiten
 - `Procfile`: Start als Web-Prozess (Webhook-Unterstützung)
 - `railway.toml`: Railway-Service-Konfiguration
+- `mod-jars/`: Ablageordner für lokal gebaute Mod-JARs (z. B. Version `1.12.2`)
 ENV-Variablen (mindestens):
 ```
 SUPABASE_URL
@@ -160,6 +161,16 @@ on conflict (id) do nothing;
 Hinweise:
 - Der Bot macht ein Upsert auf `id = 1` und speichert die komplette Konfiguration als JSON.
 - Ohne Supabase fällt der Bot automatisch auf Dateispeicherung (`config.json`) zurück.
+
+## Serverseitiger Mod-Build (Vorbereitung)
+
+- Der Ordner `mod-jars/` ist bereits angelegt und wird versioniert, echte `.jar`-Artefakte sind per `.gitignore` ausgeschlossen.
+- Erste Zielversion ist `1.12.2`. Benenne das spätere Artefakt z. B. `better-mc-bridge-1.12.2.jar` und lege es in `mod-jars/` ab.
+- Empfohlenes manuelles Vorgehen:
+  1. Mod im jeweiligen Build-System (z. B. Gradle) erzeugen.
+  2. Datei nach `mod-jars/` kopieren; Unterordner können frei gewählt werden.
+  3. Repository bleibt sauber, weil nur die README in diesem Ordner committed wird.
+- Dokumentation und weitere Hinweise findest du auch in `mod-jars/README.md`.
 
 ## Fehlerbehebung
 - Prüfe Railway-Logs, wenn der Bot nicht startet (fehlende Env-Vars werden explizit gemeldet).
