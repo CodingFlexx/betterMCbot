@@ -106,20 +106,28 @@ def parse_iso_to_aware_dt(dt_module_datetime, iso_str: str, tz_name: str) -> dat
 
 
 def format_time_delta(delta: timedelta) -> str:
-    total_seconds = int(delta.total_seconds())
+    total_seconds = delta.total_seconds()
     if total_seconds < 0:
         total_seconds = 0
-    days, rem = divmod(total_seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes, _ = divmod(rem, 60)
-    parts = []
-    if days:
-        parts.append(f"{days} Tage")
-    if hours:
-        parts.append(f"{hours} Std")
-    if minutes and not days:
-        parts.append(f"{minutes} Min")
-    return ", ".join(parts) or "0 Min"
+    
+    # Aufrunden für Tage und Stunden, aber nicht für Minuten
+    total_minutes = total_seconds / 60
+    total_hours = total_seconds / 3600
+    total_days = total_seconds / 86400
+    
+    # Wenn mehr als 1 Tag: Tage aufrunden und nur Tage anzeigen
+    if total_days >= 1:
+        days = math.ceil(total_days)
+        return f"{days} Tage"
+    
+    # Wenn mehr als 1 Stunde aber weniger als 1 Tag: Stunden aufrunden
+    if total_hours >= 1:
+        hours = math.ceil(total_hours)
+        return f"{hours} Std"
+    
+    # Wenn weniger als 1 Stunde: Exakte Minuten (abgerundet)
+    minutes = int(total_minutes)
+    return f"{minutes} Min" if minutes > 0 else "0 Min"
 
 
 async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg_id, set_last_msg_id):
@@ -151,13 +159,15 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
             if remaining <= timedelta(days=7):
                 if now.hour == target.hour and now.minute == target.minute:
                     if remaining > timedelta(hours=24):
-                        days_left = remaining.days
+                        # Aufrunden: 6 Tage 23h 59min -> 7 Tage
+                        days_left = math.ceil(remaining.total_seconds() / 86400)
                         message = f"Es sind noch {days_left} Tage bis zum Serverstart verbleibend."
                         send_now = True
                     else:
                         midnight = target.replace(hour=0, minute=0, second=0, microsecond=0)
                         if now >= midnight:
-                            hours_left = int(remaining.total_seconds() // 3600)
+                            # Aufrunden: 11h 59min -> 12h
+                            hours_left = math.ceil(remaining.total_seconds() / 3600)
                             if now.hour == 0 and now.minute == 0:
                                 message = f"Heute ist Start! Noch {hours_left} Stunden."
                                 send_now = True
@@ -169,7 +179,9 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
                                 for cp in checkpoints:
                                     if abs((remaining - cp).total_seconds()) < 60:
                                         if cp >= timedelta(hours=1):
-                                            message = f"Nur noch {int(cp.total_seconds()//3600)} Stunden bis zum Start!"
+                                            # Aufrunden für Stunden-Checkpoints
+                                            hours_checkpoint = math.ceil(cp.total_seconds() / 3600)
+                                            message = f"Nur noch {hours_checkpoint} Stunden bis zum Start!"
                                         else:
                                             message = "Nur noch 10 Minuten bis zum Start!"
                                         send_now = True
