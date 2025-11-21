@@ -85,6 +85,8 @@ COUNTDOWN_LAST_MESSAGE_ID = None
 COUNTDOWN_LAST_AUTO_MESSAGE_ID = None
 COUNTDOWN_LAST_TRIGGER_ID = None
 COUNTDOWN_ROLE_ID_INT = None
+COUNTDOWN_TIMER_MESSAGE = None  # Nachricht, die beim Timer-Ablauf gesendet wird
+COUNTDOWN_TIMER_MESSAGE_SENT = False  # Flag, ob die Nachricht bereits gesendet wurde
 
 HAS_RCON = bool(SERVER_IP and RCON_PASSWORD and RCON_PORT_INT)
 HAS_QUERY = bool(SERVER_IP and QUERY_PORT_INT)
@@ -115,6 +117,7 @@ def _apply_runtime_config(data):
     global HAS_BRIDGE, HAS_GITHUB
     global COMMAND_PREFIX
     global COUNTDOWN_CHANNEL_ID_INT, COUNTDOWN_TARGET_ISO, COUNTDOWN_TZ, COUNTDOWN_LAST_EVENT_ID, COUNTDOWN_LAST_MESSAGE_ID, COUNTDOWN_LAST_AUTO_MESSAGE_ID, COUNTDOWN_LAST_TRIGGER_ID, COUNTDOWN_ROLE_ID_INT
+    global COUNTDOWN_TIMER_MESSAGE, COUNTDOWN_TIMER_MESSAGE_SENT
 
     chat_id = _parse_int(data.get("chat_channel_id"))
     if chat_id is not None:
@@ -190,6 +193,16 @@ def _apply_runtime_config(data):
         COUNTDOWN_ROLE_ID_INT = _parse_int(str(role_id)) if role_id is not None else None
     except Exception:
         COUNTDOWN_ROLE_ID_INT = None
+
+    # Timer-Nachricht
+    timer_msg = data.get("countdown_timer_message")
+    if isinstance(timer_msg, str) and timer_msg.strip():
+        COUNTDOWN_TIMER_MESSAGE = timer_msg.strip()
+    else:
+        COUNTDOWN_TIMER_MESSAGE = None
+    
+    timer_msg_sent = data.get("countdown_timer_message_sent")
+    COUNTDOWN_TIMER_MESSAGE_SENT = bool(timer_msg_sent) if timer_msg_sent is not None else False
 
     HAS_BRIDGE = bool(HAS_RCON and CHAT_CHANNEL_ID_INT)
     HAS_GITHUB = bool(GITHUB_REPO and GITHUB_UPDATES_CHANNEL_ID_INT)
@@ -399,11 +412,14 @@ async def on_ready():
                 "COUNTDOWN_TARGET_ISO": COUNTDOWN_TARGET_ISO,
                 "COUNTDOWN_TZ": COUNTDOWN_TZ,
                 "COUNTDOWN_ROLE_ID_INT": COUNTDOWN_ROLE_ID_INT,
+                "COUNTDOWN_TIMER_MESSAGE": COUNTDOWN_TIMER_MESSAGE,
             },
             task_parse_iso,
             task_fmt_td,
             lambda: COUNTDOWN_LAST_AUTO_MESSAGE_ID,
-            lambda mid: _save_last_countdown_auto_message_id(mid)
+            lambda mid: _save_last_countdown_auto_message_id(mid),
+            lambda: COUNTDOWN_TIMER_MESSAGE_SENT,
+            lambda sent: _save_timer_message_sent_flag(sent)
         ))
     # Commands registrieren
     deps = {
@@ -444,6 +460,8 @@ async def on_ready():
             "countdown_role_id": COUNTDOWN_ROLE_ID_INT,
             "countdown_last_message_id": COUNTDOWN_LAST_MESSAGE_ID,
             "countdown_last_auto_message_id": COUNTDOWN_LAST_AUTO_MESSAGE_ID,
+            "countdown_timer_message": COUNTDOWN_TIMER_MESSAGE,
+            "countdown_timer_message_sent": COUNTDOWN_TIMER_MESSAGE_SENT,
             "features": {
                 "bridge": HAS_BRIDGE,
                 "rcon": HAS_RCON,
@@ -508,6 +526,13 @@ def _save_last_countdown_trigger_id(mid: int) -> None:
     COUNTDOWN_LAST_TRIGGER_ID = mid
     data = load_config()
     data["countdown_last_trigger_id"] = mid
+    save_config(data)
+
+def _save_timer_message_sent_flag(sent: bool) -> None:
+    global COUNTDOWN_TIMER_MESSAGE_SENT
+    COUNTDOWN_TIMER_MESSAGE_SENT = sent
+    data = load_config()
+    data["countdown_timer_message_sent"] = sent
     save_config(data)
 
 bot.run(TOKEN)

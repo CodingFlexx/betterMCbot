@@ -237,3 +237,27 @@ def register_slash_commands(bot: commands.Bot, deps):
         deps["apply_config"](data)
         await interaction.response.send_message("Countdown-Rolle entfernt.", ephemeral=True)
 
+    @bot.tree.command(name="set_timer_message", description="Speichert eine Nachricht, die beim Ablauf des Timers gesendet wird")
+    @app_commands.describe(message="Die Nachricht, die beim Timer-Ablauf gesendet werden soll (Discord-Formatierung wird unterstützt)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_timer_message(interaction: discord.Interaction, message: str):
+        if not message or not message.strip():
+            await interaction.response.send_message("Die Nachricht darf nicht leer sein.", ephemeral=True)
+            return
+        data = load_config()
+        data["countdown_timer_message"] = message.strip()
+        data["countdown_timer_message_sent"] = False  # Reset des Flags beim Setzen einer neuen Nachricht
+        save_config(data)
+        deps["apply_config"](data)
+        await interaction.response.send_message(f"Timer-Nachricht gespeichert:\n```\n{message.strip()}\n```", ephemeral=True)
+
+    @bot.tree.command(name="clear_timer_message", description="Entfernt die gespeicherte Timer-Nachricht")
+    @app_commands.default_permissions(manage_guild=True)
+    async def clear_timer_message(interaction: discord.Interaction):
+        data = load_config()
+        data.pop("countdown_timer_message", None)
+        data.pop("countdown_timer_message_sent", None)
+        save_config(data)
+        deps["apply_config"](data)
+        await interaction.response.send_message("Timer-Nachricht entfernt.", ephemeral=True)
+

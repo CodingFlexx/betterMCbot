@@ -130,7 +130,7 @@ def format_time_delta(delta: timedelta) -> str:
     return f"{minutes} Min" if minutes > 0 else "0 Min"
 
 
-async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg_id, set_last_msg_id):
+async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg_id, set_last_msg_id, get_timer_message_sent=None, set_timer_message_sent=None):
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
@@ -150,6 +150,17 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
             remaining = target - now
 
             if remaining.total_seconds() <= 0:
+                # Timer abgelaufen: Timer-Nachricht senden, falls vorhanden und noch nicht gesendet
+                timer_message = cfg.get("COUNTDOWN_TIMER_MESSAGE")
+                if timer_message and get_timer_message_sent and set_timer_message_sent:
+                    message_sent = get_timer_message_sent()
+                    if not message_sent:
+                        try:
+                            await channel.send(timer_message)
+                            set_timer_message_sent(True)
+                            logger.info("Timer-Nachricht wurde gesendet")
+                        except Exception as exc:
+                            logger.warning("Fehler beim Senden der Timer-Nachricht: %s", exc)
                 await asyncio.sleep(600)
                 continue
 
