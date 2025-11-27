@@ -41,6 +41,13 @@ def register_text_commands(bot: commands.Bot, deps):
         except Exception:
             await ctx.send("Server ist offline")
 
+    def _format_precise_delta(delta):
+        total_seconds = max(int(delta.total_seconds()), 0)
+        days, remainder = divmod(total_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes = remainder // 60
+        return f"{days} Tage, {hours} Stunden, {minutes} Minuten"
+
     @bot.command(name='wielange', aliases=['countdown'])
     async def wielange(ctx):
         if not deps["COUNTDOWN_TARGET_ISO"]:
@@ -98,7 +105,7 @@ def register_text_commands(bot: commands.Bot, deps):
             except Exception:
                 pass
         # Aktuelle Nachricht stehen lassen, neue Antwort senden und IDs speichern
-        sent = await ctx.send("Verbleibende Zeit: " + deps["fmt_td"](remaining))
+        sent = await ctx.send("Verbleibende Zeit: " + _format_precise_delta(remaining))
         if set_last:
             set_last(sent.id)
         if set_trig:
