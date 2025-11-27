@@ -168,35 +168,38 @@ async def countdown_task(bot, logger, cfg, parse_iso_to_dt, fmt_td, get_last_msg
             message = None
 
             if remaining <= timedelta(days=7):
-                if now.hour == target.hour and now.minute == target.minute:
-                    if remaining > timedelta(hours=24):
+                if remaining > timedelta(hours=24):
+                    if now.hour == target.hour and now.minute == target.minute:
                         # Aufrunden: 6 Tage 23h 59min -> 7 Tage
                         days_left = math.ceil(remaining.total_seconds() / 86400)
                         message = f"Es sind noch {days_left} Tage bis zum Serverstart verbleibend."
                         send_now = True
-                    else:
-                        midnight = target.replace(hour=0, minute=0, second=0, microsecond=0)
-                        if now >= midnight:
-                            # Aufrunden: 11h 59min -> 12h
-                            hours_left = math.ceil(remaining.total_seconds() / 3600)
-                            if now.hour == 0 and now.minute == 0:
-                                message = f"Heute ist Start! Noch {hours_left} Stunden."
-                                send_now = True
-                            elif now.hour == 12 and now.minute == 0:
-                                message = f"Heute ist Start! Noch {hours_left} Stunden."
-                                send_now = True
-                            else:
-                                checkpoints = [timedelta(hours=3), timedelta(hours=2), timedelta(hours=1), timedelta(minutes=10)]
-                                for cp in checkpoints:
-                                    if abs((remaining - cp).total_seconds()) < 60:
-                                        if cp >= timedelta(hours=1):
-                                            # Aufrunden für Stunden-Checkpoints
-                                            hours_checkpoint = math.ceil(cp.total_seconds() / 3600)
-                                            message = f"Nur noch {hours_checkpoint} Stunden bis zum Start!"
-                                        else:
-                                            message = "Nur noch 10 Minuten bis zum Start!"
-                                        send_now = True
-                                        break
+                else:
+                    midnight = target.replace(hour=0, minute=0, second=0, microsecond=0)
+                    if now >= midnight:
+                        # Aufrunden: 11h 59min -> 12h
+                        hours_left = math.ceil(remaining.total_seconds() / 3600)
+                        if now.hour == 0 and now.minute == 0:
+                            message = f"Heute ist Start! Noch {hours_left} Stunden."
+                            send_now = True
+                        else:
+                            checkpoints = [
+                                timedelta(hours=12),
+                                timedelta(hours=3),
+                                timedelta(hours=2),
+                                timedelta(hours=1),
+                                timedelta(minutes=10),
+                            ]
+                            for cp in checkpoints:
+                                if abs((remaining - cp).total_seconds()) < 60:
+                                    if cp >= timedelta(hours=1):
+                                        # Aufrunden für Stunden-Checkpoints
+                                        hours_checkpoint = math.ceil(cp.total_seconds() / 3600)
+                                        message = f"Nur noch {hours_checkpoint} Stunden bis zum Start!"
+                                    else:
+                                        message = "Nur noch 10 Minuten bis zum Start!"
+                                    send_now = True
+                                    break
             else:
                 if now.weekday() == target.weekday() and now.hour == target.hour and now.minute == target.minute:
                     # Aufrunden auf ganze Wochen, um Off-by-One durch Sekunden/DST zu vermeiden
