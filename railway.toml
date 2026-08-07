@@ -1,7 +1,0 @@
-[service]
-name = "betterMCbot"
-startCommand = "python bot.py"
-
-[env]
-PYTHON_VERSION = "3.12"
-

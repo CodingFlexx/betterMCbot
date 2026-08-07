@@ -1,0 +1,23 @@
+services:
+  bot:
+    build: .
+    image: bettermcbot
+    container_name: bettermcbot
+    restart: unless-stopped
+    env_file: .env
+    # Läuft der Minecraft-Server auf demselben Host, ist SERVER_IP=host.docker.internal
+    # (nicht 127.0.0.1 — das wäre der Container selbst).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - bot-data:/data
+      # Alternative, wenn du config.json direkt am Host bearbeiten willst:
+      #   mkdir -p data && sudo chown 1000:1000 data
+      # - ./data:/data
+    # Nur nötig, wenn GITHUB_WEBHOOK_SECRET oder MC_WEBHOOK_SECRET gesetzt ist.
+    # Hinter NAT (Homeserver) auskommentiert lassen — dann greift GitHub-Polling.
+    # ports:
+    #   - "8080:8080"
+
+volumes:
+  bot-data:

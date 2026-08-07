@@ -20,3 +20,4 @@ mod-jars/*.jar
 mod-jars/**/*.jar
 mod-jars/*.zip
 mod-jars/**/*.zip
+data/
