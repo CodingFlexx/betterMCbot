@@ -12,6 +12,7 @@ from mcipc.rcon.je import Client as RconClient
 from app.tasks import (
     countdown_reached,
     delete_message,
+    format_precise_delta,
     format_time_delta,
     parse_iso_to_aware_dt,
     render_timer_message,
@@ -79,7 +80,7 @@ def register_text_commands(bot: commands.Bot, cfg):
         if cfg.countdown_last_trigger_id != ctx.message.id:
             await delete_message(ctx.channel, cfg.countdown_last_trigger_id, bot_only=False)
 
-        sent = await ctx.send(f"Verbleibende Zeit: {format_time_delta(remaining)}")
+        sent = await ctx.send(f"Verbleibende Zeit: {format_precise_delta(remaining)}")
         cfg.set(countdown_last_message_id=sent.id, countdown_last_trigger_id=ctx.message.id)
 
 

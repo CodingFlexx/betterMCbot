@@ -134,7 +134,7 @@ sind (Standard 48h, Lauf alle 60 Minuten). `retention_hours=0` schaltet ab.
 ### Countdown
 - mehr als 7 Tage: wöchentlich am Ziel-Wochentag zur Zieluhrzeit
 - weniger als 7 Tage: täglich zur Zieluhrzeit
-- am Starttag: 00:00 und 12:00 Uhr, dazu 3h / 2h / 1h / 10min vorher
+- am Starttag: um 00:00 Uhr, dazu 12h / 3h / 2h / 1h / 10min vor dem Start
 - bei Ablauf: die per `/set_timer_message` hinterlegte Nachricht, genau einmal
 
 ### Server-IP zum Start freigeben

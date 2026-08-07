@@ -26,12 +26,21 @@ def parse_iso_to_aware_dt(iso_str, tz_name):
 
 
 def format_time_delta(delta):
+    """Gerundet — für automatische Countdown-Nachrichten."""
     total_seconds = max(delta.total_seconds(), 0)
     if total_seconds >= 86400:
         return f"{math.ceil(total_seconds / 86400)} Tage"
     if total_seconds >= 3600:
         return f"{math.ceil(total_seconds / 3600)} Std"
     return f"{int(total_seconds / 60)} Min"
+
+
+def format_precise_delta(delta):
+    """Exakt — für mc!wielange, wo auf Nachfrage die genaue Zeit erwartet wird."""
+    total_seconds = max(int(delta.total_seconds()), 0)
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    return f"{days} Tage, {hours} Stunden, {remainder // 60} Minuten"
 
 
 async def resolve_channel(bot, channel_id):
@@ -142,9 +151,17 @@ def countdown_message(now, target, remaining):
     # Starttag
     if now < target.replace(hour=0, minute=0, second=0, microsecond=0):
         return None
-    if now.minute == 0 and now.hour in (0, 12):
+    if (now.hour, now.minute) == (0, 0):
         return f"Heute ist Start! Noch {math.ceil(remaining.total_seconds() / 3600)} Stunden."
-    for checkpoint in (timedelta(hours=3), timedelta(hours=2), timedelta(hours=1), timedelta(minutes=10)):
+    # 12h relativ zum Ziel statt fix um 12:00 — sonst hängt der Abstand zur
+    # Startzeit davon ab, wann am Tag der Server startet.
+    for checkpoint in (
+        timedelta(hours=12),
+        timedelta(hours=3),
+        timedelta(hours=2),
+        timedelta(hours=1),
+        timedelta(minutes=10),
+    ):
         if abs((remaining - checkpoint).total_seconds()) < 60:
             if checkpoint >= timedelta(hours=1):
                 return f"Nur noch {math.ceil(checkpoint.total_seconds() / 3600)} Stunden bis zum Start!"

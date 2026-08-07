@@ -14,6 +14,7 @@ from app.config import Config
 from app.tasks import (
     countdown_message,
     countdown_reached,
+    format_precise_delta,
     format_time_delta,
     parse_iso_to_aware_dt,
     render_timer_message,
@@ -83,12 +84,13 @@ def test_countdown_message():
     assert at(days=3) == "Es sind noch 3 Tage bis zum Serverstart verbleibend."
     assert at(days=3, minutes=1) is None
 
-    # Starttag: 00:00 und 12:00
+    # Starttag: nur 00:00 als feste Uhrzeit
     assert at(hours=17) == "Heute ist Start! Noch 17 Stunden."
-    assert at(hours=5) == "Heute ist Start! Noch 5 Stunden."
+    assert at(hours=5) is None, "12:00 ist kein Fixpunkt — nur der 12h-Checkpoint zaehlt"
     assert at(hours=13) is None, "vor Mitternacht des Starttags noch keine Stundenmeldung"
 
     # Checkpoints
+    assert at(hours=12) == "Nur noch 12 Stunden bis zum Start!"
     assert at(hours=3) == "Nur noch 3 Stunden bis zum Start!"
     assert at(hours=1) == "Nur noch 1 Stunden bis zum Start!"
     assert at(minutes=10) == "Nur noch 10 Minuten bis zum Start!"
@@ -100,6 +102,30 @@ def test_countdown_message():
     assert countdown_message(now, odd, odd - now) == "Nur noch 10 Minuten bis zum Start!"
     midnight = odd.replace(hour=0, minute=0)
     assert countdown_message(midnight, odd, odd - midnight) == "Heute ist Start! Noch 18 Stunden."
+
+
+def test_format_precise_delta():
+    assert format_precise_delta(timedelta(days=2, hours=5, minutes=13)) == "2 Tage, 5 Stunden, 13 Minuten"
+    assert format_precise_delta(timedelta(minutes=90)) == "0 Tage, 1 Stunden, 30 Minuten"
+    assert format_precise_delta(timedelta(seconds=-5)) == "0 Tage, 0 Stunden, 0 Minuten"
+
+
+def test_countdown_checkpoints_within_24h():
+    # Ziel 18:00 — die Checkpoints haengen am Ziel, nicht an der Uhrzeit
+    target = datetime(2026, 9, 1, 18, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    def at(hour, minute):
+        now = datetime(2026, 9, 1, hour, minute, tzinfo=ZoneInfo("Europe/Berlin"))
+        return countdown_message(now, target, target - now)
+
+    assert at(0, 0) == "Heute ist Start! Noch 18 Stunden."
+    assert at(6, 0) == "Nur noch 12 Stunden bis zum Start!", "12h relativ zum Ziel, nicht fix um 12:00"
+    assert at(15, 0) == "Nur noch 3 Stunden bis zum Start!"
+    assert at(17, 0) == "Nur noch 1 Stunden bis zum Start!"
+    assert at(17, 50) == "Nur noch 10 Minuten bis zum Start!"
+    # Der Bug aus 71bd1c3: Checkpoints feuerten nur zur Ziel-Minute
+    assert at(9, 17) is None, "kein Checkpoint -> keine Nachricht"
+    assert at(12, 0) is None, "12:00 ist kein Fixpunkt mehr"
 
 
 def test_render_timer_message():
