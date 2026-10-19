@@ -6,14 +6,13 @@ from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 from discord.ext import commands
-from mcipc.query import Client as QueryClient
 from mcipc.rcon.je import Client as RconClient
+
+from app.ui import STATUS, address_text, countdown_text, help_text
 
 from app.tasks import (
     countdown_reached,
     delete_message,
-    format_precise_delta,
-    format_time_delta,
     parse_iso_to_aware_dt,
     render_timer_message,
 )
@@ -34,34 +33,20 @@ def register_text_commands(bot: commands.Bot, cfg):
         except Exception:
             await ctx.send("Server nicht erreichbar")
 
+    @bot.command(name="menu", aliases=["hilfe"])
+    async def server_menu(ctx):
+        await ctx.send(help_text(cfg), allowed_mentions=discord.AllowedMentions.none())
+
     @bot.command(name="ping")
     async def ping(ctx):
         if cfg.chat_channel_id and ctx.channel.id != cfg.chat_channel_id:
             return
-        if not cfg.has_query:
-            await ctx.send("Minecraft-Query ist nicht konfiguriert.")
-            return
-        try:
-            with QueryClient(cfg.server_ip, cfg.query_port) as client:
-                status = client.stats(full=True)
-            lines = [f"Server ist online mit {status['num_players']}/{status['max_players']} Spielern:"]
-            lines += [f"\t{player}" for player in status["players"]]
-            await ctx.send("\n".join(lines))
-        except Exception:
-            await ctx.send("Server ist offline")
+        await ctx.send(await STATUS.read(cfg, ctx.channel.id),
+                       allowed_mentions=discord.AllowedMentions.none())
 
     @bot.command(name="ip", aliases=["serverip"])
     async def ip(ctx):
-        if not cfg.server_address:
-            await ctx.send("Keine Server-Adresse hinterlegt.")
-            return
-        # Vor dem Start bleibt die Adresse unter Verschluss
-        if not countdown_reached(cfg):
-            tz_name = cfg.countdown_timezone
-            remaining = parse_iso_to_aware_dt(cfg.countdown_target_iso, tz_name) - datetime.now(ZoneInfo(tz_name))
-            await ctx.send(f"Noch nicht — der Server startet in {format_time_delta(remaining)}.")
-            return
-        await ctx.send(f"Server-IP: `{cfg.server_address}`")
+        await ctx.send(address_text(cfg), allowed_mentions=discord.AllowedMentions.none())
 
     @bot.command(name="wielange", aliases=["countdown"])
     async def wielange(ctx):
@@ -80,11 +65,17 @@ def register_text_commands(bot: commands.Bot, cfg):
         if cfg.countdown_last_trigger_id != ctx.message.id:
             await delete_message(ctx.channel, cfg.countdown_last_trigger_id, bot_only=False)
 
-        sent = await ctx.send(f"Verbleibende Zeit: {format_precise_delta(remaining)}")
+        sent = await ctx.send(countdown_text(cfg),
+                              allowed_mentions=discord.AllowedMentions.none())
         cfg.set(countdown_last_message_id=sent.id, countdown_last_trigger_id=ctx.message.id)
 
 
 def register_slash_commands(bot: commands.Bot, cfg):
+    @bot.tree.command(name="server_menu", description="Serverstatus, Countdown, Adresse und Hilfe als Text")
+    async def server_menu(interaction: discord.Interaction):
+        await interaction.response.send_message(help_text(cfg), ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
     @bot.tree.command(name="set_server_channel", description="Setzt den Discord-Channel für die Minecraft-Brücke")
     @app_commands.describe(channel="Ziel-Channel für Brücke")
     @app_commands.default_permissions(manage_guild=True)

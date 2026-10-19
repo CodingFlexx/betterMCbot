@@ -85,14 +85,16 @@ Text-Commands (Prefix `mc!`, im Mirror-Channel zusätzlich `-`):
 | Command | Wirkung |
 |---|---|
 | `mc!whitelistadd <name>` | Spieler zur Whitelist (nur im Mirror-Channel) |
-| `mc!ping` | Online-Status und Spielerliste via Query |
+| `mc!menu` / `mc!hilfe` | Kompakte Hilfe mit Status-, Countdown- und Adressbefehlen |
+| `mc!ping` | Online-Status und Spielerliste via Query — erst ab Countdown-Ende |
 | `mc!wielange` | Verbleibende Zeit bis zum Countdown-Ziel |
 | `mc!ip` | Server-Adresse — erst ab Countdown-Ende |
 
-Slash-Commands (brauchen "Manage Server", Countdown-Rolle "Administrator"):
+Slash-Commands (Konfigurationsbefehle brauchen "Manage Server", Countdown-Rolle "Administrator"; `/server_menu` ist rein lesend):
 
 | Command | Wirkung |
 |---|---|
+| `/server_menu` | Private Server-Hilfe als Text; keine Adminrechte nötig |
 | `/set_server_channel` | Channel für die Minecraft-Brücke |
 | `/set_githubupdate_channel` | Repo + Channel für Commit-/PR-Updates |
 | `/disable_github` | GitHub-Updates aus |
@@ -108,6 +110,18 @@ Slash-Commands (brauchen "Manage Server", Countdown-Rolle "Administrator"):
 Alle Änderungen greifen sofort — kein Neustart nötig.
 
 ## Features im Detail
+
+### Server-Informationen als Text
+
+`mc!menu`, `mc!hilfe` und `/server_menu` zeigen die verfügbaren Informationsbefehle
+als Text; `/server_menu` antwortet privat (ephemer). Status-, Countdown- und
+Timer-Nachrichten enthalten keine Buttons.
+
+Serverstatus und Server-Adresse bleiben bis zum eingestellten Startzeitpunkt gesperrt.
+Vorher nennen `mc!ping` und `mc!ip` das Datum und die Uhrzeit ihrer Freigabe. Statusanfragen prüfen den
+aktuell konfigurierten Mirror-Channel und laufen mit Timeout außerhalb des
+Discord-Eventloops; ein kurzer Cache vermeidet wiederholte Query-Anfragen.
+Der interne RCON-/Query-Host wird nicht als Join-Adresse angezeigt.
 
 ### Chat-Brücke
 Nachrichten im Mirror-Channel gehen via RCON in den Minecraft-Chat (Prefix `[Discord]`).
@@ -141,9 +155,9 @@ sind (Standard 48h, Lauf alle 60 Minuten). `retention_hours=0` schaltet ab.
 `/set_server_address` hinterlegt die öffentliche Join-Adresse. Sie ist gesperrt,
 solange der Countdown läuft:
 
-- **vor Ablauf** — `mc!ip` antwortet nur mit der Restzeit
+- **vor Ablauf** — `mc!ping` und `mc!ip` melden „Dieser Command ist erst ab dem … um … Uhr (…) verfügbar.“
 - **bei Ablauf** — die Adresse geht automatisch mit der Timer-Nachricht raus
-- **danach** — `mc!ip` gibt sie jederzeit aus
+- **danach** — `mc!ip` gibt sie jederzeit aus; `mc!ping` zeigt Status und Spieler
 
 In der Timer-Nachricht bestimmt `{ip}` die Position der Adresse:
 
@@ -152,7 +166,7 @@ In der Timer-Nachricht bestimmt `{ip}` die Position der Adresse:
 ```
 
 Ohne `{ip}` wird sie als eigene Zeile angehängt. Ist kein Countdown gesetzt, ist
-`mc!ip` sofort frei.
+`mc!ping` und `mc!ip` sofort frei.
 
 ## Betrieb
 
